@@ -1,0 +1,241 @@
+import os
+import aiohttp
+import discord
+from discord import app_commands
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+
+if not TOKEN:
+    raise RuntimeError("DISCORD_TOKEN is missing from your .env file")
+
+
+ROBLOX_USERS_API = "https://users.roblox.com/v1"
+ROBLOX_GROUPS_API = "https://groups.roblox.com/v2"
+
+
+async def roblox_request(method, url, **kwargs):
+    async with aiohttp.ClientSession() as session:
+        async with session.request(method, url, **kwargs) as response:
+
+            if response.status != 200:
+                return None
+
+            return await response.json()
+
+
+async def get_user(username):
+    data = await roblox_request(
+        "POST",
+        f"{ROBLOX_USERS_API}/usernames/users",
+        json={
+            "usernames": [username],
+            "excludeBannedUsers": False
+        }
+    )
+
+    if not data or not data.get("data"):
+        return None
+
+    return data["data"][0]
+
+
+async def get_user_info(user_id):
+    return await roblox_request(
+        "GET",
+        f"{ROBLOX_USERS_API}/users/{user_id}"
+    )
+
+
+async def get_groups(user_id):
+    data = await roblox_request(
+        "GET",
+        f"{ROBLOX_GROUPS_API}/users/{user_id}/groups/roles"
+    )
+
+    if not data:
+        return []
+
+    return [
+        group["group"]["id"]
+        for group in data.get("data", [])
+    ]
+
+
+def calculate_score(
+    target_name,
+    candidate_name,
+    shared_groups
+):
+    score = 0
+
+    target = target_name.lower()
+    candidate = candidate_name.lower()
+
+    # Shared groups
+    if shared_groups >= 5:
+        score += 35
+    elif shared_groups >= 3:
+        score += 25
+    elif shared_groups >= 1:
+        score += 10
+
+    # Username similarity
+    if target == candidate:
+        score += 30
+    elif target in candidate or candidate in target:
+        score += 20
+
+    return min(score, 99)
+
+
+class RobloxBot(discord.Client):
+
+    def __init__(self):
+        intents = discord.Intents.default()
+
+        super().__init__(intents=intents)
+
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self):
+        await self.tree.sync()
+
+
+bot = RobloxBot()
+
+
+@bot.tree.command(
+    name="alts",
+    description="Find possible related Roblox accounts."
+)
+@app_commands.describe(
+    username="The Roblox username to investigate"
+)
+async def alts(
+    interaction: discord.Interaction,
+    username: str
+):
+
+    await interaction.response.defer()
+
+    # Find target account
+    target = await get_user(username)
+
+    if not target:
+        await interaction.followup.send(
+            f"❌ Roblox user `{username}` was not found."
+        )
+        return
+
+    target_id = target["id"]
+    target_name = target["name"]
+
+    # Get target groups
+    target_groups = await get_groups(target_id)
+
+    # --------------------------------------------------
+    # Candidate accounts go here.
+    #
+    # Roblox does NOT provide an official "find alts"
+    # endpoint, so don't claim these are confirmed alts.
+    # --------------------------------------------------
+
+    candidates = []
+
+    # Example:
+    #
+    # candidates.append({
+    #     "id": 123456789,
+    #     "name": "ExampleUser"
+    # })
+
+    # Calculate scores
+    matches = []
+
+    for candidate in candidates:
+
+        candidate_groups = await get_groups(
+            candidate["id"]
+        )
+
+        shared_groups = len(
+            set(target_groups) &
+            set(candidate_groups)
+        )
+
+        score = calculate_score(
+            target_name,
+            candidate["name"],
+            shared_groups
+        )
+
+        if score >= 20:
+
+            matches.append({
+                "name": candidate["name"],
+                "id": candidate["id"],
+                "score": score,
+                "shared_groups": shared_groups
+            })
+
+    # Highest scores first
+    matches.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    # Create embed
+    embed = discord.Embed(
+        title="🔎 Possible Matches",
+        description=(
+            f"Possible accounts related to "
+            f"**{target_name}**\n\n"
+            "⚠️ These are automated matches based "
+            "on publicly available information. "
+            "They do **not** confirm that an account "
+            "is an alt."
+        ),
+        color=discord.Color.orange()
+    )
+
+    if not matches:
+
+        embed.add_field(
+            name="No possible matches",
+            value=(
+                "No strong possible matches were found."
+            ),
+            inline=False
+        )
+
+    else:
+
+        for number, match in enumerate(
+            matches[:10],
+            start=1
+        ):
+
+            embed.add_field(
+                name=f"{number}. {match['name']}",
+                value=(
+                    f"🟡 **{match['score']}% possible match**\n"
+                    f"👥 Shared groups: "
+                    f"{match['shared_groups']}\n"
+                    f"🆔 User ID: `{match['id']}`"
+                ),
+                inline=False
+            )
+
+    embed.set_footer(
+        text="Possible match ≠ confirmed alt"
+    )
+
+    await interaction.followup.send(
+        embed=embed
+    )
+
+
+bot.run(TOKEN)
