@@ -1,24 +1,34 @@
-"""Generic game follow-and-join link system.
+"""Discord slash-command bot for sharing game join links.
 
-This module does not log into games, bypass privacy settings, or automate
-game actions. Each game should provide its own official presence/invite API.
-The system stores the latest game session a player has shared, creates a
-join link, and sends that link through a pluggable message sender.
+The bot only shares links that a player explicitly provides. It does not log
+into games, bypass privacy settings, or automate game actions.
 
-Run:
-    python main.py
+Commands:
+    /share game session_id join_url
+    /follow player
+    /join player
+    /unfollow player
 
-Use the classes directly to connect this to an official game API or chat
-service. See the example at the bottom of the file.
+Required secret:
+    DISCORD_BOT_TOKEN
+
+Optional environment variable:
+    DISCORD_GUILD_ID - sync commands to one server immediately while testing.
+                       Without it, commands sync globally and can take a while
+                       to appear in Discord.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Dict, Optional
-from urllib.parse import quote, urlparse
+from typing import Dict, Optional
+from urllib.parse import urlparse
+
+import discord
+from discord import app_commands
 
 
 @dataclass(frozen=True)
@@ -32,20 +42,12 @@ class GameSession:
     updated_at: datetime
 
 
-MessageSender = Callable[[str, str], None]
-
-
 class GameJoinSystem:
-    """Tracks shared sessions and sends official join links."""
+    """Tracks sessions and followers for the lifetime of the bot process."""
 
-    def __init__(self, sender: Optional[MessageSender] = None) -> None:
+    def __init__(self) -> None:
         self._sessions: Dict[str, GameSession] = {}
         self._followers: Dict[str, set[str]] = {}
-        self._sender = sender or self._console_sender
-
-    @staticmethod
-    def _console_sender(recipient: str, message: str) -> None:
-        print(f"\nMessage to {recipient}:\n{message}\n")
 
     @staticmethod
     def _clean_name(value: str, label: str) -> str:
@@ -81,9 +83,6 @@ class GameJoinSystem:
             updated_at=datetime.now(timezone.utc),
         )
         self._sessions[player.casefold()] = session
-
-        for follower in self._followers.get(player.casefold(), set()):
-            self.send_join_link(follower, player)
         return session
 
     def follow(self, follower: str, player: str) -> None:
@@ -95,14 +94,6 @@ class GameJoinSystem:
             raise ValueError("A player cannot follow themselves.")
 
         self._followers.setdefault(player.casefold(), set()).add(follower)
-        session = self._sessions.get(player.casefold())
-        if session:
-            self.send_join_link(follower, player)
-        else:
-            self._sender(
-                follower,
-                f"{player} is not currently sharing a game session.",
-            )
 
     def unfollow(self, follower: str, player: str) -> None:
         """Stop notifications for a player's shared sessions."""
@@ -119,21 +110,120 @@ class GameJoinSystem:
 
         return self._sessions.get(self._clean_name(player, "player").casefold())
 
-    def send_join_link(self, recipient: str, player: str) -> None:
-        """Send the latest official join URL for a player."""
+    def get_join_message(self, player: str) -> str:
+        """Build a Discord-friendly join message for a player's session."""
 
-        recipient = self._clean_name(recipient, "recipient")
         player = self._clean_name(player, "player")
         session = self.get_session(player)
         if session is None:
             raise LookupError(f"{player} has not shared a game session.")
 
-        message = (
+        return (
             f"{player} is playing {session.game}.\n"
             f"Join here: {session.join_url}\n"
             "Only join if you recognize the game and trust the link."
         )
-        self._sender(recipient, message)
+
+    def is_following(self, follower: str, player: str) -> bool:
+        return self._clean_name(follower, "follower") in self._followers.get(
+            self._clean_name(player, "player").casefold(), set()
+        )
+
+
+class JoinBot(discord.Client):
+    """Discord client that registers and handles the slash commands."""
+
+    def __init__(self) -> None:
+        intents = discord.Intents.none()
+        super().__init__(intents=intents)
+        self.commands = app_commands.CommandTree(self)
+        self.join_system = GameJoinSystem()
+
+    async def setup_hook(self) -> None:
+        guild_id = os.getenv("DISCORD_GUILD_ID", "").strip()
+        if guild_id:
+            guild = discord.Object(id=int(guild_id))
+            self.commands.copy_global_to(guild=guild)
+            synced = await self.commands.sync(guild=guild)
+            print(f"Synced {len(synced)} slash commands to guild {guild_id}.")
+        else:
+            synced = await self.commands.sync()
+            print(
+                f"Synced {len(synced)} global slash commands. "
+                "Set DISCORD_GUILD_ID for instant testing in one server."
+            )
+
+    async def on_ready(self) -> None:
+        if self.user:
+            print(f"Bot online as {self.user} (ID: {self.user.id})")
+
+
+bot = JoinBot()
+
+
+@bot.commands.command(name="share", description="Share your current game join link")
+@app_commands.describe(
+    game="The game you are playing",
+    session_id="Your game room, lobby, or session ID",
+    join_url="The official link others can use to join",
+)
+async def share(
+    interaction: discord.Interaction,
+    game: str,
+    session_id: str,
+    join_url: str,
+) -> None:
+    player = interaction.user.display_name
+    try:
+        session = bot.join_system.share_session(player, game, session_id, join_url)
+        await interaction.response.send_message(
+            f"Shared your {session.game} session. Use `/join {player}` to get the link."
+        )
+        followers = bot.join_system._followers.get(player.casefold(), set())
+        if followers:
+            await interaction.followup.send(
+                f"{len(followers)} follower(s) can now use `/join {player}`.",
+                ephemeral=True,
+            )
+    except ValueError as error:
+        await interaction.response.send_message(str(error), ephemeral=True)
+
+
+@bot.commands.command(name="follow", description="Follow someone's shared game sessions")
+@app_commands.describe(player="The player's Discord display name")
+async def follow(interaction: discord.Interaction, player: str) -> None:
+    try:
+        bot.join_system.follow(interaction.user.display_name, player)
+        session = bot.join_system.get_session(player)
+        status = (
+            f"Current join link: {session.join_url}"
+            if session
+            else f"{player} has not shared a session yet."
+        )
+        await interaction.response.send_message(
+            f"You are now following {player}. {status}"
+        )
+    except ValueError as error:
+        await interaction.response.send_message(str(error), ephemeral=True)
+
+
+@bot.commands.command(name="join", description="Get someone's latest game join link")
+@app_commands.describe(player="The player's Discord display name")
+async def join(interaction: discord.Interaction, player: str) -> None:
+    try:
+        await interaction.response.send_message(bot.join_system.get_join_message(player))
+    except (LookupError, ValueError) as error:
+        await interaction.response.send_message(str(error), ephemeral=True)
+
+
+@bot.commands.command(name="unfollow", description="Stop following someone's sessions")
+@app_commands.describe(player="The player's Discord display name")
+async def unfollow(interaction: discord.Interaction, player: str) -> None:
+    try:
+        bot.join_system.unfollow(interaction.user.display_name, player)
+        await interaction.response.send_message(f"You unfollowed {player}.")
+    except ValueError as error:
+        await interaction.response.send_message(str(error), ephemeral=True)
 
 
 def _build_cli() -> argparse.ArgumentParser:
@@ -163,17 +253,18 @@ def main() -> None:
 
     try:
         if args.command == "share":
-            session = system.share_session(
-                args.player, args.game, args.session_id, args.join_url
-            )
+            session = system.share_session(args.player, args.game, args.session_id, args.join_url)
             print(f"Shared {session.game} session for {session.player}.")
         elif args.command == "follow":
             system.follow(args.follower, args.player)
         elif args.command == "send":
-            system.send_join_link(args.recipient, args.player)
+            print(system.get_join_message(args.player))
     except (LookupError, ValueError) as error:
         parser.error(str(error))
 
 
 if __name__ == "__main__":
-    main()
+    if os.getenv("DISCORD_BOT_TOKEN"):
+        bot.run(os.environ["DISCORD_BOT_TOKEN"])
+    else:
+        main()
