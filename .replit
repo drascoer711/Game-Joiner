@@ -24,12 +24,12 @@ args = "Discord Join Bot"
 name = "Discord Join Bot"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python main.py"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python roblox_bot.py"
 
 [agent]
 stack = "PNPM_WORKSPACE"

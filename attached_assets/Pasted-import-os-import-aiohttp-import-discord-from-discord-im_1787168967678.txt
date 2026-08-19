@@ -1,0 +1,642 @@
+import os
+import aiohttp
+import discord
+from discord import app_commands
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+
+if not TOKEN:
+    raise RuntimeError("DISCORD_TOKEN is missing from .env")
+
+
+USERS_API = "https://users.roblox.com/v1"
+GROUPS_API = "https://groups.roblox.com/v2"
+THUMBNAILS_API = "https://thumbnails.roblox.com/v1"
+BADGES_API = "https://badges.roblox.com/v1"
+
+
+# -----------------------------
+# Roblox API helper
+# -----------------------------
+
+async def request(method, url, **kwargs):
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.request(
+                method,
+                url,
+                timeout=15,
+                **kwargs
+            ) as response:
+
+                if response.status != 200:
+                    return None
+
+                return await response.json()
+
+    except Exception:
+        return None
+
+
+# -----------------------------
+# Find Roblox user
+# -----------------------------
+
+async def find_user(username):
+
+    data = await request(
+        "POST",
+        f"{USERS_API}/usernames/users",
+        json={
+            "usernames": [username],
+            "excludeBannedUsers": False
+        }
+    )
+
+    if not data or not data.get("data"):
+        return None
+
+    return data["data"][0]
+
+
+# -----------------------------
+# User information
+# -----------------------------
+
+async def get_user(user_id):
+
+    return await request(
+        "GET",
+        f"{USERS_API}/users/{user_id}"
+    )
+
+
+# -----------------------------
+# Avatar
+# -----------------------------
+
+async def get_avatar(user_id):
+
+    data = await request(
+        "GET",
+        f"{THUMBNAILS_API}/users/avatar-headshot",
+        params={
+            "userIds": user_id,
+            "size": "420x420",
+            "format": "Png",
+            "isCircular": "false"
+        }
+    )
+
+    if not data or not data.get("data"):
+        return None
+
+    return data["data"][0].get("imageUrl")
+
+
+# -----------------------------
+# Groups
+# -----------------------------
+
+async def get_groups(user_id):
+
+    data = await request(
+        "GET",
+        f"{GROUPS_API}/users/{user_id}/groups/roles"
+    )
+
+    if not data:
+        return []
+
+    return data.get("data", [])
+
+
+# -----------------------------
+# Badges
+# -----------------------------
+
+async def get_badges(user_id):
+
+    data = await request(
+        "GET",
+        f"{BADGES_API}/users/{user_id}/badges",
+        params={
+            "limit": 10,
+            "sortOrder": "Desc"
+        }
+    )
+
+    if not data:
+        return []
+
+    return data.get("data", [])
+
+
+# -----------------------------
+# Calculate possible match
+# -----------------------------
+
+def calculate_match(
+    target_name,
+    candidate_name,
+    shared_groups
+):
+
+    score = 0
+
+    target = target_name.lower()
+    candidate = candidate_name.lower()
+
+    if target == candidate:
+        score += 30
+
+    elif target in candidate or candidate in target:
+        score += 20
+
+    if shared_groups >= 5:
+        score += 35
+
+    elif shared_groups >= 3:
+        score += 25
+
+    elif shared_groups >= 1:
+        score += 10
+
+    return min(score, 99)
+
+
+# -----------------------------
+# Discord bot
+# -----------------------------
+
+class RobloxBot(discord.Client):
+
+    def __init__(self):
+
+        intents = discord.Intents.default()
+
+        super().__init__(
+            intents=intents
+        )
+
+        self.tree = app_commands.CommandTree(self)
+
+        # Voluntarily provided country information
+        self.user_countries = {}
+
+    async def setup_hook(self):
+
+        await self.tree.sync()
+
+        print("Slash commands synced.")
+
+
+bot = RobloxBot()
+
+
+# =========================================================
+# /user
+# =========================================================
+
+@bot.tree.command(
+    name="user",
+    description="Search for a Roblox user."
+)
+@app_commands.describe(
+    username="Roblox username"
+)
+async def user(
+    interaction: discord.Interaction,
+    username: str
+):
+
+    await interaction.response.defer()
+
+    user = await find_user(username)
+
+    if not user:
+
+        await interaction.followup.send(
+            f"❌ Roblox user `{username}` was not found."
+        )
+
+        return
+
+    user_id = user["id"]
+
+    info = await get_user(user_id)
+
+    if not info:
+
+        await interaction.followup.send(
+            "❌ Couldn't retrieve Roblox information."
+        )
+
+        return
+
+    avatar = await get_avatar(user_id)
+
+    embed = discord.Embed(
+        title="🔎 Roblox User",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="Username",
+        value=f"`{info.get('name', 'Unknown')}`",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Display Name",
+        value=info.get("displayName", "Unknown"),
+        inline=True
+    )
+
+    embed.add_field(
+        name="User ID",
+        value=f"`{user_id}`",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Created",
+        value=info.get("created", "Unknown")[:10],
+        inline=True
+    )
+
+    embed.add_field(
+        name="Description",
+        value=info.get("description") or "No description",
+        inline=False
+    )
+
+    if avatar:
+        embed.set_thumbnail(url=avatar)
+
+    embed.add_field(
+        name="Profile",
+        value=f"https://www.roblox.com/users/{user_id}/profile",
+        inline=False
+    )
+
+    await interaction.followup.send(
+        embed=embed
+    )
+
+
+# =========================================================
+# /avatar
+# =========================================================
+
+@bot.tree.command(
+    name="avatar",
+    description="Show a Roblox user's avatar."
+)
+@app_commands.describe(
+    username="Roblox username"
+)
+async def avatar(
+    interaction: discord.Interaction,
+    username: str
+):
+
+    await interaction.response.defer()
+
+    user = await find_user(username)
+
+    if not user:
+
+        await interaction.followup.send(
+            "❌ User not found."
+        )
+
+        return
+
+    avatar_url = await get_avatar(user["id"])
+
+    if not avatar_url:
+
+        await interaction.followup.send(
+            "❌ Couldn't retrieve the avatar."
+        )
+
+        return
+
+    embed = discord.Embed(
+        title=f"🖼️ {user['name']}'s Avatar",
+        color=discord.Color.blurple()
+    )
+
+    embed.set_image(url=avatar_url)
+
+    await interaction.followup.send(
+        embed=embed
+    )
+
+
+# =========================================================
+# /groups
+# =========================================================
+
+@bot.tree.command(
+    name="groups",
+    description="Show a Roblox user's groups."
+)
+@app_commands.describe(
+    username="Roblox username"
+)
+async def groups(
+    interaction: discord.Interaction,
+    username: str
+):
+
+    await interaction.response.defer()
+
+    user = await find_user(username)
+
+    if not user:
+
+        await interaction.followup.send(
+            "❌ User not found."
+        )
+
+        return
+
+    groups = await get_groups(user["id"])
+
+    embed = discord.Embed(
+        title=f"👥 Groups — {user['name']}",
+        color=discord.Color.blurple()
+    )
+
+    if not groups:
+
+        embed.description = "No groups found."
+
+    else:
+
+        lines = []
+
+        for group in groups[:20]:
+
+            group_info = group["group"]
+            role = group["role"]
+
+            lines.append(
+                f"**{group_info['name']}**\n"
+                f"Role: `{role['name']}`\n"
+                f"ID: `{group_info['id']}`"
+            )
+
+        embed.description = "\n\n".join(lines)
+
+    embed.set_footer(
+        text=f"{len(groups)} groups found"
+    )
+
+    await interaction.followup.send(
+        embed=embed
+    )
+
+
+# =========================================================
+# /badges
+# =========================================================
+
+@bot.tree.command(
+    name="badges",
+    description="Show public Roblox badges."
+)
+@app_commands.describe(
+    username="Roblox username"
+)
+async def badges(
+    interaction: discord.Interaction,
+    username: str
+):
+
+    await interaction.response.defer()
+
+    user = await find_user(username)
+
+    if not user:
+
+        await interaction.followup.send(
+            "❌ User not found."
+        )
+
+        return
+
+    badges = await get_badges(user["id"])
+
+    embed = discord.Embed(
+        title=f"🏆 Badges — {user['name']}",
+        color=discord.Color.gold()
+    )
+
+    if not badges:
+
+        embed.description = "No badges found."
+
+    else:
+
+        embed.description = "\n".join(
+            f"🏅 **{badge.get('name', 'Unknown')}**"
+            for badge in badges
+        )
+
+    await interaction.followup.send(
+        embed=embed
+    )
+
+
+# =========================================================
+# /country
+# =========================================================
+
+@bot.tree.command(
+    name="country",
+    description="Save a voluntarily provided country."
+)
+@app_commands.describe(
+    country="Country you choose to provide"
+)
+async def country(
+    interaction: discord.Interaction,
+    country: str
+):
+
+    bot.user_countries[interaction.user.id] = country
+
+    await interaction.response.send_message(
+        f"🌎 Your voluntarily provided country is now **{country}**."
+    )
+
+
+# =========================================================
+# /scan
+# =========================================================
+
+@bot.tree.command(
+    name="scan",
+    description="Run a Roblox public-information scan."
+)
+@app_commands.describe(
+    username="Roblox username"
+)
+async def scan(
+    interaction: discord.Interaction,
+    username: str
+):
+
+    await interaction.response.defer()
+
+    user = await find_user(username)
+
+    if not user:
+
+        await interaction.followup.send(
+            "❌ Roblox user not found."
+        )
+
+        return
+
+    user_id = user["id"]
+
+    info = await get_user(user_id)
+    avatar = await get_avatar(user_id)
+    groups = await get_groups(user_id)
+    badges = await get_badges(user_id)
+
+    embed = discord.Embed(
+        title="🔎 Roblox Public Scan",
+        description=(
+            f"Public information for **{user['name']}**"
+        ),
+        color=discord.Color.orange()
+    )
+
+    embed.add_field(
+        name="👤 Account",
+        value=(
+            f"Username: `{info['name']}`\n"
+            f"Display: `{info['displayName']}`\n"
+            f"User ID: `{user_id}`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📅 Account Created",
+        value=info.get(
+            "created",
+            "Unknown"
+        )[:10],
+        inline=True
+    )
+
+    embed.add_field(
+        name="👥 Groups",
+        value=str(len(groups)),
+        inline=True
+    )
+
+    embed.add_field(
+        name="🏆 Badges Retrieved",
+        value=str(len(badges)),
+        inline=True
+    )
+
+    embed.add_field(
+        name="🌎 Country",
+        value=(
+            "Not available from Roblox's normal "
+            "public user API."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="⚠️ Privacy",
+        value=(
+            "This scan only uses publicly available "
+            "Roblox information. It does not reveal "
+            "private location, IP, password, or device data."
+        ),
+        inline=False
+    )
+
+    if avatar:
+        embed.set_thumbnail(url=avatar)
+
+    await interaction.followup.send(
+        embed=embed
+    )
+
+
+# =========================================================
+# /alts
+# =========================================================
+
+@bot.tree.command(
+    name="alts",
+    description="Show possible related Roblox accounts."
+)
+@app_commands.describe(
+    username="Roblox username"
+)
+async def alts(
+    interaction: discord.Interaction,
+    username: str
+):
+
+    await interaction.response.defer()
+
+    user = await find_user(username)
+
+    if not user:
+
+        await interaction.followup.send(
+            "❌ Roblox user not found."
+        )
+
+        return
+
+    embed = discord.Embed(
+        title="🔎 Possible Matches",
+        description=(
+            f"Possible accounts related to "
+            f"**{user['name']}**\n\n"
+            "🟡 This feature only identifies "
+            "possible matches from public signals."
+        ),
+        color=discord.Color.orange()
+    )
+
+    embed.add_field(
+        name="No confirmed alts",
+        value=(
+            "Roblox does not provide an official "
+            "public API that confirms alternate accounts."
+        ),
+        inline=False
+    )
+
+    embed.set_footer(
+        text="Possible match ≠ confirmed alt"
+    )
+
+    await interaction.followup.send(
+        embed=embed
+    )
+
+
+# =========================================================
+# Start bot
+# =========================================================
+
+bot.run(TOKEN)
