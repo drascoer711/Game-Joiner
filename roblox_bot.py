@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 from typing import Any, Optional
+import asyncio
 
 import aiohttp
 import discord
@@ -31,6 +32,8 @@ USERS_API = "https://users.roblox.com/v1"
 GROUPS_API = "https://groups.roblox.com/v2"
 THUMBNAILS_API = "https://thumbnails.roblox.com/v1"
 BADGES_API = "https://badges.roblox.com/v1"
+FRIENDS_API = "https://friends.roblox.com/v1"
+AVATAR_API = "https://avatar.roblox.com/v1"
 
 
 async def request_json(
@@ -90,6 +93,37 @@ async def get_badges(user_id: int) -> list[dict[str, Any]]:
         params={"limit": 10, "sortOrder": "Desc"},
     )
     return data.get("data", []) if data else []
+
+
+async def get_avatar_assets(user_id: int) -> list[dict[str, Any]]:
+    data = await request_json("GET", f"{AVATAR_API}/users/{user_id}/avatar")
+    return data.get("assets", []) if data else []
+
+
+async def get_friend_page(
+    endpoint: str, user_id: int, cursor: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    params: dict[str, Any] = {"limit": 100, "sortOrder": "Asc"}
+    if cursor:
+        params["cursor"] = cursor
+    return await request_json("GET", f"{FRIENDS_API}/users/{user_id}/{endpoint}", params=params)
+
+
+async def get_social_accounts(
+    user_id: int, endpoint: str
+) -> list[dict[str, Any]]:
+    """Read public friend/follower pages until Roblox has no next cursor."""
+
+    accounts: list[dict[str, Any]] = []
+    cursor: Optional[str] = None
+    while True:
+        page = await get_friend_page(endpoint, user_id, cursor)
+        if not page:
+            return accounts
+        accounts.extend(page.get("data", []))
+        cursor = page.get("nextPageCursor")
+        if not cursor:
+            return accounts
 
 
 async def resolve(username: str) -> Optional[dict[str, Any]]:
@@ -268,44 +302,146 @@ async def check_accounts(
     interaction: discord.Interaction, username1: str, username2: str
 ) -> None:
     await interaction.response.defer(ephemeral=True)
-    first, second = await __import__("asyncio").gather(
-        resolve(username1), resolve(username2)
-    )
+    first, second = await asyncio.gather(resolve(username1), resolve(username2))
     if not first or not second:
         await interaction.followup.send(
             "One or both Roblox users were not found.", ephemeral=True
         )
         return
 
-    first_groups, second_groups = await __import__("asyncio").gather(
-        get_groups(int(first["id"])), get_groups(int(second["id"]))
+    first_id = int(first["id"])
+    second_id = int(second["id"])
+    (
+        first_groups,
+        second_groups,
+        first_friends,
+        second_friends,
+        first_followers,
+        second_followers,
+        first_followings,
+        second_followings,
+        first_badges,
+        second_badges,
+        first_avatar,
+        second_avatar,
+    ) = await asyncio.gather(
+        get_groups(first_id),
+        get_groups(second_id),
+        get_social_accounts(first_id, "friends"),
+        get_social_accounts(second_id, "friends"),
+        get_social_accounts(first_id, "followers"),
+        get_social_accounts(second_id, "followers"),
+        get_social_accounts(first_id, "followings"),
+        get_social_accounts(second_id, "followings"),
+        get_badges(first_id),
+        get_badges(second_id),
+        get_avatar_assets(first_id),
+        get_avatar_assets(second_id),
     )
-    first_by_id = {entry["group"]["id"]: entry["group"]["name"] for entry in first_groups}
+
+    first_by_id = {
+        entry["group"]["id"]: entry["group"].get("name", "Unknown")
+        for entry in first_groups
+    }
     second_ids = {entry["group"]["id"] for entry in second_groups}
     shared_names = [
         name for group_id, name in first_by_id.items() if group_id in second_ids
     ]
-    shared_text = ", ".join(shared_names[:15]) if shared_names else "None found"
+
+    def account_ids(accounts: list[dict[str, Any]]) -> set[int]:
+        return {int(account["id"]) for account in accounts if account.get("id")}
+
+    def account_names(
+        accounts: list[dict[str, Any]], shared_ids: set[int]
+    ) -> list[str]:
+        return [
+            str(account.get("name", account.get("displayName", account["id"])))
+            for account in accounts
+            if int(account.get("id", -1)) in shared_ids
+        ]
+
+    shared_friend_ids = account_ids(first_friends) & account_ids(second_friends)
+    shared_follower_ids = account_ids(first_followers) & account_ids(second_followers)
+    shared_following_ids = account_ids(first_followings) & account_ids(second_followings)
+    shared_badge_ids = {
+        int(badge["id"])
+        for badge in first_badges
+        if badge.get("id")
+    } & {
+        int(badge["id"])
+        for badge in second_badges
+        if badge.get("id")
+    }
+    first_asset_names = {
+        str(asset.get("name", asset.get("id")))
+        for asset in first_avatar
+    }
+    second_asset_names = {
+        str(asset.get("name", asset.get("id")))
+        for asset in second_avatar
+    }
+    shared_assets = sorted(first_asset_names & second_asset_names)
+
+    def display(values: list[str], limit: int = 12) -> str:
+        if not values:
+            return "None found"
+        suffix = f" (+{len(values) - limit} more)" if len(values) > limit else ""
+        return ", ".join(values[:limit]) + suffix
 
     embed = discord.Embed(
         title="Roblox Account Comparison",
         description=(
             f"Public comparison of **{first.get('name', username1)}** and "
-            f"**{second.get('name', username2)}**."
+            f"**{second.get('name', username2)}**.\n"
+            "This report contains public facts only and is not an alt determination."
         ),
         color=discord.Color.blurple(),
     )
-    embed.add_field(name="Shared public groups", value=shared_text, inline=False)
+    embed.add_field(
+        name=f"Shared groups ({len(shared_names)})",
+        value=display(shared_names),
+        inline=False,
+    )
+    embed.add_field(
+        name=f"Mutual public friends ({len(shared_friend_ids)})",
+        value=display(account_names(first_friends, shared_friend_ids)),
+        inline=False,
+    )
+    embed.add_field(
+        name=f"Shared followers ({len(shared_follower_ids)})",
+        value=display(account_names(first_followers, shared_follower_ids)),
+        inline=False,
+    )
+    embed.add_field(
+        name=f"Shared following ({len(shared_following_ids)})",
+        value=display(account_names(first_followings, shared_following_ids)),
+        inline=False,
+    )
+    embed.add_field(
+        name=f"Shared badge IDs ({len(shared_badge_ids)})",
+        value=display([str(badge_id) for badge_id in sorted(shared_badge_ids)]),
+        inline=False,
+    )
+    embed.add_field(
+        name=f"Shared avatar items ({len(shared_assets)})",
+        value=display(shared_assets),
+        inline=False,
+    )
     embed.add_field(
         name="Account IDs",
-        value=f"`{first['id']}` and `{second['id']}`",
+        value=(
+            f"{first.get('name', username1)}: "
+            f"https://www.roblox.com/users/{first_id}/profile\n"
+            f"{second.get('name', username2)}: "
+            f"https://www.roblox.com/users/{second_id}/profile"
+        ),
         inline=False,
     )
     embed.add_field(
         name="Important",
         value=(
-            "Shared groups or similar public details do not prove account "
-            "ownership or an alternate account."
+            "Shared groups, friends, badges, or avatar items do not prove "
+            "account ownership or an alternate account."
         ),
         inline=False,
     )
