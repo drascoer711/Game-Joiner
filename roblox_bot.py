@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import difflib
 import traceback
+from datetime import datetime, timezone
 from typing import Any, Optional
 import asyncio
 
@@ -36,6 +37,7 @@ THUMBNAILS_API = "https://thumbnails.roblox.com/v1"
 BADGES_API = "https://badges.roblox.com/v1"
 FRIENDS_API = "https://friends.roblox.com/v1"
 AVATAR_API = "https://avatar.roblox.com/v1"
+GAMES_API = "https://games.roblox.com/v2"
 
 
 async def request_json(
@@ -100,6 +102,15 @@ async def get_badges(user_id: int) -> list[dict[str, Any]]:
 async def get_avatar_assets(user_id: int) -> list[dict[str, Any]]:
     data = await request_json("GET", f"{AVATAR_API}/users/{user_id}/avatar")
     return data.get("assets", []) if data else []
+
+
+async def get_favorite_games(user_id: int) -> list[dict[str, Any]]:
+    data = await request_json(
+        "GET",
+        f"{GAMES_API}/users/{user_id}/favorite/games",
+        params={"sortOrder": "Desc", "limit": 50},
+    )
+    return data.get("data", []) if data else []
 
 
 async def get_friend_page(
@@ -348,6 +359,8 @@ async def check_accounts(
         second_badges,
         first_avatar,
         second_avatar,
+        first_games,
+        second_games,
     ) = await asyncio.gather(
         get_groups(first_id),
         get_groups(second_id),
@@ -361,6 +374,8 @@ async def check_accounts(
         get_badges(second_id),
         get_avatar_assets(first_id),
         get_avatar_assets(second_id),
+        get_favorite_games(first_id),
+        get_favorite_games(second_id),
     )
 
     first_by_id = {
@@ -404,7 +419,82 @@ async def check_accounts(
         str(asset.get("name", asset.get("id")))
         for asset in second_avatar
     }
+    first_asset_ids = {int(asset["id"]) for asset in first_avatar if asset.get("id")}
+    second_asset_ids = {int(asset["id"]) for asset in second_avatar if asset.get("id")}
     shared_assets = sorted(first_asset_names & second_asset_names)
+    shared_asset_ids = first_asset_ids & second_asset_ids
+
+    first_game_ids = {int(game["id"]) for game in first_games if game.get("id")}
+    second_game_ids = {int(game["id"]) for game in second_games if game.get("id")}
+    shared_game_ids = first_game_ids & second_game_ids
+    first_game_names = {
+        int(game["id"]): str(game.get("name", game["id"]))
+        for game in first_games
+        if game.get("id")
+    }
+    shared_game_names = [
+        first_game_names[game_id]
+        for game_id in sorted(shared_game_ids)
+        if game_id in first_game_names
+    ]
+    first_badge_names = {
+        int(badge["id"]): str(badge.get("name", badge["id"]))
+        for badge in first_badges
+        if badge.get("id")
+    }
+    second_badge_ids = {
+        int(badge["id"]) for badge in second_badges if badge.get("id")
+    }
+    shared_badge_names = [
+        first_badge_names[badge_id]
+        for badge_id in sorted(shared_badge_ids)
+        if badge_id in first_badge_names and badge_id in second_badge_ids
+    ]
+    first_roles = {
+        entry["group"]["id"]: entry["role"].get("name", "Unknown")
+        for entry in first_groups
+    }
+    second_roles = {
+        entry["group"]["id"]: entry["role"].get("name", "Unknown")
+        for entry in second_groups
+    }
+    shared_role_names = [
+        f"{first_by_id[group_id]} ({role_name})"
+        for group_id, role_name in first_roles.items()
+        if group_id in second_roles and role_name == second_roles[group_id]
+    ]
+
+    def text_similarity(first_text: str, second_text: str) -> float:
+        return difflib.SequenceMatcher(
+            None, first_text.casefold().strip(), second_text.casefold().strip()
+        ).ratio()
+
+    def account_age_similarity() -> float:
+        try:
+            first_created = datetime.fromisoformat(
+                str(first.get("created", "")).replace("Z", "+00:00")
+            )
+            second_created = datetime.fromisoformat(
+                str(second.get("created", "")).replace("Z", "+00:00")
+            )
+            if first_created.tzinfo is None:
+                first_created = first_created.replace(tzinfo=timezone.utc)
+            if second_created.tzinfo is None:
+                second_created = second_created.replace(tzinfo=timezone.utc)
+            days_apart = abs((first_created - second_created).days)
+            return max(0.0, 1.0 - min(days_apart, 3650) / 3650)
+        except (TypeError, ValueError):
+            return 0.0
+
+    username_similarity = text_similarity(
+        str(first.get("name", username1)), str(second.get("name", username2))
+    )
+    display_name_similarity = text_similarity(
+        str(first.get("displayName", "")), str(second.get("displayName", ""))
+    )
+    profile_similarity = text_similarity(
+        str(first.get("description", "")), str(second.get("description", ""))
+    )
 
     overlap_sets = [
         (set(first_by_id), second_ids),
@@ -419,15 +509,22 @@ async def check_accounts(
             first_asset_names,
             second_asset_names,
         ),
+        (first_game_ids, second_game_ids),
     ]
     overlap_values = []
     for first_values, second_values in overlap_sets:
         union = first_values | second_values
         if union:
             overlap_values.append(len(first_values & second_values) / len(union))
-    public_overlap = round(
-        (sum(overlap_values) / len(overlap_values)) * 100
-    ) if overlap_values else 0
+    overlap_values.extend(
+        [
+            username_similarity,
+            display_name_similarity,
+            account_age_similarity(),
+            profile_similarity,
+        ]
+    )
+    public_overlap = round((sum(overlap_values) / len(overlap_values)) * 100)
 
     def display(values: list[str], limit: int = 12) -> str:
         if not values:
@@ -475,10 +572,42 @@ async def check_accounts(
         inline=False,
     )
     embed.add_field(
+        name=f"Shared avatar item IDs ({len(shared_asset_ids)})",
+        value=display([str(asset_id) for asset_id in sorted(shared_asset_ids)]),
+        inline=False,
+    )
+    embed.add_field(
+        name=f"Shared group roles ({len(shared_role_names)})",
+        value=display(shared_role_names),
+        inline=False,
+    )
+    embed.add_field(
+        name=f"Shared favorite games ({len(shared_game_ids)})",
+        value=display(shared_game_names),
+        inline=False,
+    )
+    embed.add_field(
+        name=f"Shared badge names ({len(shared_badge_names)})",
+        value=display(shared_badge_names),
+        inline=False,
+    )
+    embed.add_field(
+        name="Similarity breakdown",
+        value=(
+            f"Usernames: {round(username_similarity * 100)}%\n"
+            f"Display names: {round(display_name_similarity * 100)}%\n"
+            f"Account age proximity: {round(account_age_similarity() * 100)}%\n"
+            f"Profile descriptions: {round(profile_similarity * 100)}%\n"
+            f"Favorite games: {round((len(shared_game_ids) / len(first_game_ids | second_game_ids)) * 100) if first_game_ids | second_game_ids else 0}%"
+        ),
+        inline=False,
+    )
+    embed.add_field(
         name=f"Public overlap: {public_overlap}%",
         value=(
             "This is the average overlap of the public groups, friends, "
-            "followers, following, badges, and avatar items listed below. "
+            "followers, following, badges, avatar items, favorite games, "
+            "names, account age, and profile text listed below. "
             "It is not an alt probability or ownership score."
         ),
         inline=False,
