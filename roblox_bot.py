@@ -147,6 +147,10 @@ async def resolve(username: str) -> Optional[dict[str, Any]]:
     return info or user
 
 
+async def fetch_discord_profile(user_id: int) -> discord.User:
+    return await bot.fetch_user(user_id)
+
+
 class RobloxCommandTree(app_commands.CommandTree):
     async def on_error(
         self,
@@ -678,9 +682,32 @@ async def check_discord(
         and account2.avatar is not None
         and account1.avatar.key == account2.avatar.key
     )
+    profile1, profile2 = await asyncio.gather(
+        fetch_discord_profile(account1.id),
+        fetch_discord_profile(account2.id),
+    )
+    same_banner = (
+        profile1.banner is not None
+        and profile2.banner is not None
+        and profile1.banner.key == profile2.banner.key
+    )
+    account_age_days = abs(
+        (discord.utils.snowflake_time(account1.id)
+         - discord.utils.snowflake_time(account2.id)).days
+    )
+    account_age_similarity = max(0.0, 1.0 - min(account_age_days, 3650) / 3650)
     public_overlap = round(
-        ((role_overlap + username_similarity + display_similarity + int(same_avatar))
-         / 4)
+        (
+            (
+                role_overlap
+                + username_similarity
+                + display_similarity
+                + int(same_avatar)
+                + int(same_banner)
+                + account_age_similarity
+            )
+            / 6
+        )
         * 100
     )
     shared_roles = [
@@ -701,7 +728,20 @@ async def check_discord(
         name=f"Public overlap: {public_overlap}%",
         value=(
             "Based on visible server roles, username similarity, display-name "
-            "similarity, and avatar equality. This is not an alt probability."
+            "similarity, avatar/banner equality, and account-age proximity. "
+            "This is not an alt probability."
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Similarity breakdown",
+        value=(
+            f"Server roles: {round(role_overlap * 100)}%\n"
+            f"Usernames: {round(username_similarity * 100)}%\n"
+            f"Display names: {round(display_similarity * 100)}%\n"
+            f"Account age proximity: {round(account_age_similarity * 100)}%\n"
+            f"Matching avatar: {'Yes' if same_avatar else 'No'}\n"
+            f"Matching banner: {'Yes' if same_banner else 'No'}"
         ),
         inline=False,
     )
@@ -716,7 +756,8 @@ async def check_discord(
         name="Important",
         value=(
             "Similar names, roles, or avatars do not prove that accounts "
-            "belong to the same person."
+            "belong to the same person. The bot does not scan private "
+            "connections, IP addresses, devices, or inaccessible servers."
         ),
         inline=False,
     )
