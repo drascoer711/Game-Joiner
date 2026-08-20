@@ -31,6 +31,9 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("DISCORD_BOT_TOKEN is missing from Replit Secrets.")
 
+APP_OWNER_ID = 1256992368477864029
+REQUIRED_ROLE_ID = 1457867706790580317
+
 USERS_API = "https://users.roblox.com/v1"
 GROUPS_API = "https://groups.roblox.com/v2"
 THUMBNAILS_API = "https://thumbnails.roblox.com/v1"
@@ -151,6 +154,21 @@ async def fetch_discord_profile(user_id: int) -> discord.User:
     return await bot.fetch_user(user_id)
 
 
+class RequiredRoleError(app_commands.CheckFailure):
+    """Raised when a member is not allowed to use the bot."""
+
+
+async def has_bot_access(interaction: discord.Interaction) -> bool:
+    if interaction.user.id == APP_OWNER_ID:
+        return True
+    roles = getattr(interaction.user, "roles", [])
+    if any(role.id == REQUIRED_ROLE_ID for role in roles):
+        return True
+    raise RequiredRoleError(
+        "You need the required bot access role to use this command."
+    )
+
+
 class RobloxCommandTree(app_commands.CommandTree):
     async def on_error(
         self,
@@ -164,6 +182,11 @@ class RobloxCommandTree(app_commands.CommandTree):
         message = "The command could not complete. Please try again."
         if isinstance(error, app_commands.MissingPermissions):
             message = "Only Discord server administrators can use this command."
+        elif isinstance(error, RequiredRoleError):
+            message = (
+                "You do not have permission to use this bot. "
+                "You need the required bot access role."
+            )
         try:
             if interaction.response.is_done():
                 await interaction.followup.send(message, ephemeral=True)
@@ -199,6 +222,7 @@ bot = RobloxBot()
 
 @bot.tree.command(name="user", description="Search for a Roblox user.")
 @app_commands.describe(username="Roblox username")
+@app_commands.check(has_bot_access)
 async def user_command(
     interaction: discord.Interaction, username: str
 ) -> None:
@@ -229,6 +253,7 @@ async def user_command(
 
 @bot.tree.command(name="avatar", description="Show a Roblox user's avatar.")
 @app_commands.describe(username="Roblox username")
+@app_commands.check(has_bot_access)
 async def avatar_command(
     interaction: discord.Interaction, username: str
 ) -> None:
@@ -251,6 +276,7 @@ async def avatar_command(
 
 @bot.tree.command(name="groups", description="Show a Roblox user's public groups.")
 @app_commands.describe(username="Roblox username")
+@app_commands.check(has_bot_access)
 async def groups_command(
     interaction: discord.Interaction, username: str
 ) -> None:
@@ -276,6 +302,7 @@ async def groups_command(
 
 @bot.tree.command(name="badges", description="Show a Roblox user's public badges.")
 @app_commands.describe(username="Roblox username")
+@app_commands.check(has_bot_access)
 async def badges_command(
     interaction: discord.Interaction, username: str
 ) -> None:
@@ -298,6 +325,7 @@ async def badges_command(
 
 @bot.tree.command(name="scan", description="Show a Roblox user's public information.")
 @app_commands.describe(username="Roblox username")
+@app_commands.check(has_bot_access)
 async def scan_command(
     interaction: discord.Interaction, username: str
 ) -> None:
@@ -336,7 +364,7 @@ async def scan_command(
     username1="First Roblox username",
     username2="Second Roblox username",
 )
-@app_commands.checks.has_permissions(administrator=True)
+@app_commands.check(has_bot_access)
 async def check_accounts(
     interaction: discord.Interaction, username1: str, username2: str
 ) -> None:
@@ -645,7 +673,7 @@ async def check_accounts(
     account1="First Discord server member",
     account2="Second Discord server member",
 )
-@app_commands.checks.has_permissions(administrator=True)
+@app_commands.check(has_bot_access)
 async def check_discord(
     interaction: discord.Interaction,
     account1: discord.Member,
