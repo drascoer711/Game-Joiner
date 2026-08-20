@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import difflib
+import traceback
 from typing import Any, Optional
 import asyncio
 
@@ -135,10 +136,32 @@ async def resolve(username: str) -> Optional[dict[str, Any]]:
     return info or user
 
 
+class RobloxCommandTree(app_commands.CommandTree):
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: app_commands.AppCommandError,
+    ) -> None:
+        """Always acknowledge command failures instead of leaving Discord waiting."""
+
+        print(f"Slash command error: {error}")
+        traceback.print_exception(error)
+        message = "The command could not complete. Please try again."
+        if isinstance(error, app_commands.MissingPermissions):
+            message = "Only Discord server administrators can use this command."
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except discord.DiscordException as response_error:
+            print(f"Could not send slash-command error response: {response_error}")
+
+
 class RobloxBot(discord.Client):
     def __init__(self) -> None:
         super().__init__(intents=discord.Intents.none())
-        self.tree = app_commands.CommandTree(self)
+        self.tree = RobloxCommandTree(self)
 
     async def setup_hook(self) -> None:
         guild_id = os.getenv("DISCORD_GUILD_ID", "").strip()
@@ -496,6 +519,12 @@ async def check_discord(
     account2: discord.Member,
 ) -> None:
     await interaction.response.defer(ephemeral=True)
+    if interaction.guild is None:
+        await interaction.followup.send(
+            "This command can only be used inside a Discord server.",
+            ephemeral=True,
+        )
+        return
     if account1.id == account2.id:
         await interaction.followup.send(
             "Choose two different Discord members.", ephemeral=True
