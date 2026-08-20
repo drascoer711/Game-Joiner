@@ -226,7 +226,7 @@ bot = RobloxBot()
 async def user_command(
     interaction: discord.Interaction, username: str
 ) -> None:
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     info = await resolve(username)
     if not info:
         await interaction.followup.send(
@@ -248,7 +248,7 @@ async def user_command(
     avatar = await get_avatar(user_id)
     if avatar:
         embed.set_thumbnail(url=avatar)
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="avatar", description="Show a Roblox user's avatar.")
@@ -257,7 +257,7 @@ async def user_command(
 async def avatar_command(
     interaction: discord.Interaction, username: str
 ) -> None:
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     info = await resolve(username)
     if not info:
         await interaction.followup.send("Roblox user not found.", ephemeral=True)
@@ -271,7 +271,7 @@ async def avatar_command(
         color=discord.Color.blurple(),
     )
     embed.set_image(url=avatar)
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="groups", description="Show a Roblox user's public groups.")
@@ -280,7 +280,7 @@ async def avatar_command(
 async def groups_command(
     interaction: discord.Interaction, username: str
 ) -> None:
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     info = await resolve(username)
     if not info:
         await interaction.followup.send("Roblox user not found.", ephemeral=True)
@@ -297,7 +297,7 @@ async def groups_command(
         color=discord.Color.blurple(),
     )
     embed.set_footer(text=f"{len(groups)} groups found")
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="badges", description="Show a Roblox user's public badges.")
@@ -306,7 +306,7 @@ async def groups_command(
 async def badges_command(
     interaction: discord.Interaction, username: str
 ) -> None:
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     info = await resolve(username)
     if not info:
         await interaction.followup.send("Roblox user not found.", ephemeral=True)
@@ -320,7 +320,7 @@ async def badges_command(
         description=description,
         color=discord.Color.gold(),
     )
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="scan", description="Show a Roblox user's public information.")
@@ -329,7 +329,7 @@ async def badges_command(
 async def scan_command(
     interaction: discord.Interaction, username: str
 ) -> None:
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     info = await resolve(username)
     if not info:
         await interaction.followup.send("Roblox user not found.", ephemeral=True)
@@ -353,7 +353,7 @@ async def scan_command(
     avatar = await get_avatar(int(info["id"]))
     if avatar:
         embed.set_thumbnail(url=avatar)
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(
