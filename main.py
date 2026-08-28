@@ -359,7 +359,6 @@ async def report(interaction: discord.Interaction, target: str, reason: str, pro
         embed = discord.Embed(title="🚨 Incident Report Logged", description=f"**Target:** `{target}`\n**Reason:** {reason}\n**Evidence:** [Link Provided]({proof})", color=0xED4245, timestamp=datetime.now(timezone.utc))
         embed.set_footer(text=f"Filed by {interaction.user}", icon_url=interaction.user.display_avatar.url)
         
-        # Dispatch to Verify/Logs channel if available
         try:
             log_chan = await interaction.client.fetch_channel(VERIFY_LOG_CHANNEL_ID)
             await log_chan.send(embed=embed)
@@ -407,27 +406,39 @@ async def finduser(interaction: discord.Interaction, username: str):
     try:
         info = await ro.resolve(username)
         if not info:
-            embed = discord.Embed(title="❌ Resolution Failed", description=f"Could not locate Roblox user matching **`{username}`**.", color=0xED4245)
+            embed = discord.Embed(
+                title="❌ Resolution Failed", 
+                description=f"Could not locate Roblox user matching **`{username}`**.", 
+                color=0xED4245
+            )
             await interaction.followup.send(embed=embed, ephemeral=True)
             return
         
         user_id = int(info["id"])
         
-        # Fetch presence data safely
-        presence = None
+        presence_data = None
         try:
-            if hasattr(ro, 'get_presence'):
-                presence = await ro.get_presence(user_id)
+            if hasattr(ro, 'get_user_presences'):
+                presences = await ro.get_user_presences([user_id])
+                if presences:
+                    presence_data = presences[0]
+            elif hasattr(ro, 'get_presence'):
+                presence_data = await ro.get_presence(user_id)
         except Exception as p_err:
-            print(f"[ERROR LOG] Presence lookup warning for {user_id}: {type(p_err).__name__} - {p_err}")
+            print(f"[ERROR LOG] Presence lookup warning for user {user_id}: {type(p_err).__name__} - {p_err}")
         
-        embed = discord.Embed(title=f"🔎 Telemetry Tracker: {info.get('name')} (@{username})", color=0x57F287, timestamp=datetime.now(timezone.utc))
+        embed = discord.Embed(
+            title=f"🔎 Telemetry Tracker: {info.get('name')} (@{username})", 
+            color=0x57F287, 
+            timestamp=datetime.now(timezone.utc)
+        )
         embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
         
-        if presence and isinstance(presence, dict) and presence.get("placeId"):
-            place_id = presence.get("placeId")
-            job_id = presence.get("gameId")
-            
+        place_id = getattr(presence_data, "place_id", None) or (presence_data.get("placeId") if isinstance(presence_data, dict) else None)
+        job_id = getattr(presence_data, "job_id", None) or (presence_data.get("gameId") if isinstance(presence_data, dict) else None)
+        presence_type = getattr(presence_data, "user_presence_type", None) or (presence_data.get("userPresenceType") if isinstance(presence_data, dict) else None)
+
+        if place_id and presence_type == 2:
             public_link = f"https://www.roblox.com/games/{place_id}"
             embed.add_field(name="🌍 Public Game Link", value=f"[Join Public Universe]({public_link})", inline=False)
             
@@ -435,11 +446,11 @@ async def finduser(interaction: discord.Interaction, username: str):
                 private_link = f"https://www.roblox.com/games/{place_id}?privateServerLinkCode={job_id}"
                 embed.add_field(name="🔒 Server Instance / VIP Link", value=f"[Join Specific Server Instance]({private_link})", inline=False)
             else:
-                embed.add_field(name="🔒 Server Instance", value="User is active in a public session without a locked job token.", inline=False)
+                embed.add_field(name="🔒 Server Instance", value="User is active in a public session without an exposed job token.", inline=False)
         else:
             profile_url = f"https://www.roblox.com/users/{user_id}/profile"
             embed.add_field(name="🌐 Roblox Web Profile", value=f"[View Profile Page]({profile_url})", inline=False)
-            embed.description = f"Target **{info.get('name')}** is currently offline or playing in a private/restricted universe."
+            embed.description = f"Target **{info.get('name')}** is currently offline, in-studio, or has privacy settings restricting presence telemetry."
 
         avatar = await ro.get_avatar(user_id)
         if avatar:
@@ -447,9 +458,19 @@ async def finduser(interaction: discord.Interaction, username: str):
             
         embed.set_footer(text="Roblox Realtime Telemetry Scanner")
         await interaction.followup.send(embed=embed, ephemeral=True)
+        
     except Exception as e:
-        print(f"[ERROR LOG] Command /finduser critical failure: {type(e).__name__} - {e}")
-        await interaction.followup.send(embed=discord.Embed(title="⚠️ System Error", description=f"Execution error in finduser: `{e}`", color=0xED4245), ephemeral=True)
+        error_trace = traceback.format_exc()
+        print(f"[ERROR LOG] Command /finduser critical failure:\n{error_trace}")
+        
+        err_embed = discord.Embed(
+            title="⚠️ System Error Log",
+            description=f"An exception occurred during execution:\n```py\n{type(e).__name__}: {e}\n```",
+            color=0xED4245,
+            timestamp=datetime.now(timezone.utc)
+        )
+        err_embed.set_footer(text="Check console output for full traceback logs.")
+        await interaction.followup.send(embed=err_embed, ephemeral=True)
 
 @bot.tree.command(name="clear-global", description="Owner only: completely clear all global application command trees and re-sync.")
 @owner_only()
