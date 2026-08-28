@@ -6,9 +6,6 @@ import re
 from datetime import datetime, timezone
 import asyncio
 import threading
-import json
-import urllib.request
-import urllib.error
 
 import discord
 from discord import app_commands
@@ -416,14 +413,14 @@ async def finduser(interaction: discord.Interaction, username: str):
         
         user_id = int(info["id"])
         
-        presence_data = None
+        presence_obj = None
         try:
             if hasattr(ro, 'get_user_presences'):
                 presences = await ro.get_user_presences([user_id])
                 if presences:
-                    presence_data = presences[0]
+                    presence_obj = presences[0]
             elif hasattr(ro, 'get_presence'):
-                presence_data = await ro.get_presence(user_id)
+                presence_obj = await ro.get_presence(user_id)
         except Exception as p_err:
             print(f"[ERROR LOG] Presence lookup warning for user {user_id}: {type(p_err).__name__} - {p_err}")
         
@@ -436,12 +433,25 @@ async def finduser(interaction: discord.Interaction, username: str):
         
         place_id = None
         job_id = None
-        presence_type = 0
+        presence_type = None
 
-        if presence_data:
-            place_id = getattr(presence_data, "place_id", None) or (presence_data.get("placeId") if isinstance(presence_data, dict) else None)
-            job_id = getattr(presence_data, "job_id", None) or (presence_data.get("gameId") if isinstance(presence_data, dict) else None)
-            presence_type = getattr(presence_data, "user_presence_type", None) or (presence_data.get("userPresenceType") if isinstance(presence_data, dict) else None)
+        if presence_obj:
+            presence_type = getattr(presence_obj, "user_presence_type", None)
+            
+            # ro.py uses sub-objects (.place and .job) on Presence objects
+            place_attr = getattr(presence_obj, "place", None)
+            if place_attr:
+                place_id = getattr(place_attr, "id", None) or getattr(place_attr, "place_id", None)
+                
+            job_attr = getattr(presence_obj, "job", None)
+            if job_attr:
+                job_id = getattr(job_attr, "id", None) or getattr(job_attr, "job_id", None)
+                
+            # Fallback check if it dictionary-mapped unexpectedly
+            if not place_id and isinstance(presence_obj, dict):
+                place_id = presence_obj.get("placeId")
+            if not job_id and isinstance(presence_obj, dict):
+                job_id = presence_obj.get("gameId")
 
         print(f"[DEBUG] User {user_id} Presence Type: {presence_type} | Place ID: {place_id} | Job ID: {job_id}")
 
