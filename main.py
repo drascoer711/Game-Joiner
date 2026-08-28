@@ -14,7 +14,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask, request, jsonify, render_template_string
-from roblox import Client as RobloxClient
 
 # ==========================================
 # CONFIGURATION & FLASK WEB SERVER (RENDER)
@@ -109,7 +108,7 @@ def api_verify():
 async def log_verification_event(user_id: str, ip_address: str, user_agent: str, country: str):
     try:
         user = bot.get_user(int(user_id)) or await bot.fetch_user(int(user_id))
-        verify_channel = bot.get_channel(VERIFY_LOG_CHANNEL_ID) or await bot.fetch_channel(VERIFY_LOG_CHANNEL_ID)
+        verify_channel = await bot.fetch_channel(VERIFY_LOG_CHANNEL_ID)
         
         if verify_channel and isinstance(verify_channel, discord.TextChannel):
             embed = discord.Embed(
@@ -141,7 +140,7 @@ APP_OWNER_ID = int(os.getenv("APP_OWNER_ID", "1256992368477864029") or 125699236
 REQUIRED_ROLE_ID = int(os.getenv("REQUIRED_ROLE_ID", "1457867706790580317") or 1457867706790580317)
 DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID", "").strip()
 
-# Logging Channel IDs
+# Logging Channel IDs requested by user
 ALL_LOGS_CHANNEL_ID = 1540448203323875430
 FAILED_LOGS_CHANNEL_ID = 1540449747179937913
 LOG_CHANNEL_ID = 1540490675928174694
@@ -156,8 +155,6 @@ BADGES_API = "https://badges.roblox.com/v1"
 FRIENDS_API = "https://friends.roblox.com/v1"
 AVATAR_API = "https://avatar.roblox.com/v1"
 GAMES_API = "https://games.roblox.com/v2"
-
-roblox = RobloxClient(ROBLOX_COOKIE if ROBLOX_COOKIE else "")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -216,7 +213,7 @@ async def resolve(username: str) -> Optional[dict[str, Any]]:
 
 async def log_to_channel(channel_id: int, content: str) -> None:
     try:
-        channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+        channel = await bot.fetch_channel(channel_id)
         if channel and isinstance(channel, discord.TextChannel):
             if len(content) > 1990:
                 content = content[:1987] + "..."
@@ -299,8 +296,8 @@ class PersistentVerificationView(discord.ui.View):
 
         alt_summary = "\n".join(suspects[:3]) if suspects else "No high-probability linked accounts detected across mutual nodes."
 
-        verify_log_channel = interaction.client.get_channel(VERIFY_LOG_CHANNEL_ID)
-        if verify_log_channel:
+        try:
+            verify_log_channel = await interaction.client.fetch_channel(VERIFY_LOG_CHANNEL_ID)
             log_embed = discord.Embed(
                 title="🛡️ Verification Portal & Telemetry Triggered",
                 description=f"User **{interaction.user}** (`{interaction.user.id}`) initialized the verification flow.",
@@ -309,10 +306,9 @@ class PersistentVerificationView(discord.ui.View):
             )
             log_embed.add_field(name="📊 Account Metadata", value=f"• **Created At:** `{interaction.user.created_at.strftime('%Y-%m-%d %H:%M')}`", inline=False)
             log_embed.add_field(name="🕵️ Potential Alts", value=alt_summary[:1024], inline=False)
-            try:
-                await verify_log_channel.send(embed=log_embed)
-            except Exception:
-                pass
+            await verify_log_channel.send(embed=log_embed)
+        except Exception:
+            pass
 
         render_external_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:10000")
         verification_url = f"{render_external_url}/index.html?user_id={interaction.user.id}"
@@ -520,17 +516,17 @@ async def robloxlink(interaction: discord.Interaction, place_id: str, job_id: st
     await interaction.followup.send(embed=embed)
 
 
-@bot.tree.command(name="finduser", description="Finds a Roblox user and generates an instant direct-join server link using ro.py.")
+@bot.tree.command(name="finduser", description="Finds a Roblox user and generates an instant direct-join server link.")
 @app_commands.describe(username="Exact Roblox username")
 async def finduser(interaction: discord.Interaction, username: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
-        user = await roblox.get_user_by_username(username)
-        if not user:
+        info = await resolve(username)
+        if not info:
             await interaction.followup.send(f"❌ User **'{username}'** not found.", ephemeral=True)
             return
-        embed = discord.Embed(title=f"🔎 {user.display_name} (@{user.name})", color=0x57F287)
-        embed.add_field(name="User ID", value=str(user.id), inline=True)
+        embed = discord.Embed(title=f"🔎 {info.get('name')} (@{username})", color=0x57F287)
+        embed.add_field(name="User ID", value=str(info['id']), inline=True)
         await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"❌ Error: `{e}`", ephemeral=True)
