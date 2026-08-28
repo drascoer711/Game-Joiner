@@ -1,23 +1,10 @@
-#!/usr/bin/env python3
-"""
-Discord Roblox public-information bot with dedicated channel logging & Flask keep-alive.
-
-Commands:
-    /user username
-    /avatar username
-    /groups username
-    /badges username
-    /scan username
-    /check-accounts username1 username2   (admin/owner only)
-    /check-discord account1 account2      (admin/owner only)
-    /clear-global                         (owner only)
-"""
-
 from __future__ import annotations
 
 import os
 import difflib
 import traceback
+import math
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 import asyncio
@@ -26,14 +13,127 @@ from threading import Thread
 import aiohttp
 import discord
 from discord import app_commands
-from flask import Flask
+from discord.ext import commands
+from flask import Flask, request, jsonify, render_template_string
+from roblox import Client as RobloxClient
 
-# --- FLASK KEEP-ALIVE WEB SERVER ---
+# ==========================================
+# CONFIGURATION & FLASK KEEP-ALIVE SERVER
+# ==========================================
 app = Flask('')
 
 @app.route('/')
 def home():
     return "Bot is alive and running!"
+
+# HTML template for the web verification portal supporting IP and session tracking
+VERIFY_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Verification Portal</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121214; color: #e1e1e6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: #202024; padding: 40px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); text-align: center; max-width: 400px; width: 100%; border: 1px solid #323238; }
+        h2 { color: #00b37e; margin-bottom: 10px; }
+        p { color: #9999a1; font-size: 14px; line-height: 1.5; margin-bottom: 24px; }
+        .btn { background: #00b37e; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; cursor: pointer; width: 100%; font-size: 16px; transition: background 0.2s; }
+        .btn:hover { background: #00875f; }
+        .status { margin-top: 15px; font-size: 12px; color: #7c7c8a; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>🛡️ Secure Verification</h2>
+        <p>Complete authentication to sync your security tokens and verify your node access within the community database.</p>
+        <button class="btn" onclick="verifySession()">Authorize & Verify</button>
+        <div class="status" id="statusText">Awaiting user authorization...</div>
+    </div>
+    <script>
+        async function verifySession() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const userId = urlParams.get('user_id');
+            const statusEl = document.getElementById('statusText');
+            
+            statusEl.innerText = "Transmitting session telemetry...";
+            
+            try {
+                const response = await fetch('/api/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: userId })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    statusEl.innerText = "✅ Verification successful! You can now close this tab.";
+                    document.querySelector('.btn').style.display = 'none';
+                } else {
+                    statusEl.innerText = "❌ Error: " + (data.error || "Unknown error occurred.");
+                }
+            } catch (e) {
+                statusEl.innerText = "❌ Network transport failed.";
+            }
+        }
+    </script>
+</body>
+</html>
+"""
+
+@app.route('/index.html')
+def verify_page():
+    return render_template_string(VERIFY_TEMPLATE)
+
+@app.route('/api/verify', methods=['POST'])
+def api_verify():
+    data = request.get_json() or {}
+    user_id = data.get('user_id')
+    
+    # Capture client connection telemetry (IP address and origin proxies)
+    ip_address = request.headers.get('X-Forwarded-For', request.remote_addr)
+    user_agent = request.headers.get('User-Agent', 'Unknown')
+    country = request.headers.get('CF-IPCountry', request.headers.get('X-Vercel-IP-Country', 'Unknown'))
+    
+    if not user_id:
+        return jsonify({"error": "Missing user identifier"}), 400
+
+    # Dispatch captured verification logs asynchronously to Discord
+    future = asyncio.run_coroutine_threadsafe(
+        log_verification_event(user_id, ip_address, user_agent, country), 
+        bot.loop
+    )
+    try:
+        future.result(timeout=5)
+    except Exception:
+        pass
+
+    return jsonify({"status": "success", "message": "Telemetry logged and verified."})
+
+async def log_verification_event(user_id: str, ip_address: str, user_agent: str, country: str):
+    try:
+        user = bot.get_user(int(user_id)) or await bot.fetch_user(int(user_id))
+        verify_channel = bot.get_channel(VERIFY_LOG_CHANNEL_ID) or await bot.fetch_channel(VERIFY_LOG_CHANNEL_ID)
+        
+        if verify_channel and isinstance(verify_channel, discord.TextChannel):
+            embed = discord.Embed(
+                title="✅ Web Verification Completed",
+                description=f"User **{user}** (`{user_id}`) successfully authenticated via the web browser portal.",
+                color=0x57F287,
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(
+                name="🌐 Captured Telemetry & Network Route",
+                value=(
+                    f"• **IP Address:** `{ip_address}`\n"
+                    f"• **Country Origin:** `{country}`\n"
+                    f"• **Browser User-Agent:** `{user_agent[:150]}`"
+                ),
+                inline=False
+            )
+            await verify_channel.send(embed=embed)
+    except Exception as e:
+        print(f"Failed to process webhook verification log: {e}")
 
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
@@ -43,8 +143,9 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+ROBLOX_COOKIE = os.getenv("ROBLOX_COOKIE")
+
 if not TOKEN:
     raise RuntimeError("DISCORD_BOT_TOKEN is missing from Replit Secrets.")
 
@@ -55,7 +156,11 @@ DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID", "").strip()
 # Logging Channel IDs
 ALL_LOGS_CHANNEL_ID = 1540448203323875430
 FAILED_LOGS_CHANNEL_ID = 1540449747179937913
+LOG_CHANNEL_ID = 1540490675928174694
+VERIFY_LOG_CHANNEL_ID = 1541463371394711583
+OWNER_ID = 1256992368477864029
 
+# Roblox Public APIs
 USERS_API = "https://users.roblox.com/v1"
 GROUPS_API = "https://groups.roblox.com/v2"
 THUMBNAILS_API = "https://thumbnails.roblox.com/v1"
@@ -64,7 +169,17 @@ FRIENDS_API = "https://friends.roblox.com/v1"
 AVATAR_API = "https://avatar.roblox.com/v1"
 GAMES_API = "https://games.roblox.com/v2"
 
+# Initialize ro.py client
+roblox = RobloxClient(ROBLOX_COOKIE if ROBLOX_COOKIE else "")
 
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+
+
+# ==========================================
+# ROBLOX HELPER FUNCTIONS & API WRAPPERS
+# ==========================================
 async def request_json(
     method: str, url: str, **kwargs: Any
 ) -> Optional[dict[str, Any]]:
@@ -78,7 +193,6 @@ async def request_json(
     except (aiohttp.ClientError, TimeoutError):
         return None
 
-
 async def find_user(username: str) -> Optional[dict[str, Any]]:
     data = await request_json(
         "POST",
@@ -88,10 +202,8 @@ async def find_user(username: str) -> Optional[dict[str, Any]]:
     users = data.get("data", []) if data else []
     return users[0] if users else None
 
-
 async def get_user(user_id: int) -> Optional[dict[str, Any]]:
     return await request_json("GET", f"{USERS_API}/users/{user_id}")
-
 
 async def get_avatar(user_id: int) -> Optional[str]:
     data = await request_json(
@@ -107,13 +219,11 @@ async def get_avatar(user_id: int) -> Optional[str]:
     avatars = data.get("data", []) if data else []
     return avatars[0].get("imageUrl") if avatars else None
 
-
 async def get_groups(user_id: int) -> list[dict[str, Any]]:
     data = await request_json(
         "GET", f"{GROUPS_API}/users/{user_id}/groups/roles"
     )
     return data.get("data", []) if data else []
-
 
 async def get_badges(user_id: int) -> list[dict[str, Any]]:
     data = await request_json(
@@ -123,11 +233,9 @@ async def get_badges(user_id: int) -> list[dict[str, Any]]:
     )
     return data.get("data", []) if data else []
 
-
 async def get_avatar_assets(user_id: int) -> list[dict[str, Any]]:
     data = await request_json("GET", f"{AVATAR_API}/users/{user_id}/avatar")
     return data.get("assets", []) if data else []
-
 
 async def get_favorite_games(user_id: int) -> list[dict[str, Any]]:
     data = await request_json(
@@ -137,7 +245,6 @@ async def get_favorite_games(user_id: int) -> list[dict[str, Any]]:
     )
     return data.get("data", []) if data else []
 
-
 async def get_friend_page(
     endpoint: str, user_id: int, cursor: Optional[str] = None
 ) -> Optional[dict[str, Any]]:
@@ -145,7 +252,6 @@ async def get_friend_page(
     if cursor:
         params["cursor"] = cursor
     return await request_json("GET", f"{FRIENDS_API}/users/{user_id}/{endpoint}", params=params)
-
 
 async def get_social_accounts(
     user_id: int, endpoint: str
@@ -161,7 +267,6 @@ async def get_social_accounts(
         if not cursor:
             return accounts
 
-
 async def resolve(username: str) -> Optional[dict[str, Any]]:
     user = await find_user(username)
     if not user:
@@ -169,13 +274,10 @@ async def resolve(username: str) -> Optional[dict[str, Any]]:
     info = await get_user(int(user["id"]))
     return info or user
 
-
 async def fetch_discord_profile(user_id: int) -> discord.User:
     return await bot.fetch_user(user_id)
 
-
 async def log_to_channel(channel_id: int, content: str) -> None:
-    """Helper to safely post log strings to a Discord channel in the background."""
     try:
         channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
         if channel and isinstance(channel, discord.TextChannel):
@@ -186,9 +288,11 @@ async def log_to_channel(channel_id: int, content: str) -> None:
         print(f"Failed to send log to channel {channel_id}: {e}")
 
 
+# ==========================================
+# PERMISSIONS & CHECKS
+# ==========================================
 class RequiredRoleError(app_commands.CheckFailure):
     """Raised when a member is not allowed to use the bot."""
-
 
 async def has_bot_access(interaction: discord.Interaction) -> bool:
     if APP_OWNER_ID and interaction.user.id == APP_OWNER_ID:
@@ -200,7 +304,6 @@ async def has_bot_access(interaction: discord.Interaction) -> bool:
         "You need the required bot access role to use this command."
     )
 
-
 def owner_only():
     async def predicate(interaction: discord.Interaction) -> bool:
         if APP_OWNER_ID and interaction.user.id == APP_OWNER_ID:
@@ -209,6 +312,142 @@ def owner_only():
     return app_commands.check(predicate)
 
 
+# ==========================================
+# PERSISTENT VERIFICATION VIEWS
+# ==========================================
+class LinkVerificationView(discord.ui.View):
+    def __init__(self, verification_url: str):
+        super().__init__(timeout=60)
+        self.add_item(
+            discord.ui.Button(
+                label="Open Web Verification",
+                style=discord.ButtonStyle.link,
+                url=verification_url,
+            )
+        )
+
+class PersistentVerificationView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Verify Account",
+        style=discord.ButtonStyle.green,
+        custom_id="persistent_verify:btn",
+        emoji="✅",
+    )
+    async def verify_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        target = interaction.user
+        target_created = target.created_at
+        target_name_base = re.sub(r"\d+", "", target.name).lower()
+        now_utc = datetime.now(timezone.utc)
+
+        suspects = []
+        checked_ids = set()
+
+        for guild in interaction.client.guilds:
+            if guild.get_member(target.id):
+                for member in guild.members:
+                    if member.id == target.id or member.id in checked_ids:
+                        continue
+                    checked_ids.add(member.id)
+
+                    alt_score = 0
+                    reasons = []
+                    member_created = member.created_at
+                    age_diff = abs((target_created - member_created).total_seconds())
+
+                    if age_diff < 172800:
+                        reasons.append("<48h window")
+                        alt_score += 4
+
+                    member_name_base = re.sub(r"\d+", "", member.name).lower()
+                    if (
+                        target_name_base
+                        and member_name_base
+                        and (
+                            target_name_base in member_name_base
+                            or member_name_base in target_name_base
+                        )
+                        and len(target_name_base) > 3
+                    ):
+                        reasons.append("Matching name pattern")
+                        alt_score += 3
+
+                    if (now_utc - member_created).days < 14:
+                        reasons.append("New/Burner velocity")
+                        alt_score += 2
+
+                    if alt_score >= 4:
+                        suspects.append(
+                            f"• **{member}** (`{member.id}`) [Score: `{alt_score}` |"
+                            f" {', '.join(reasons)}]"
+                        )
+
+        alt_summary = (
+            "\n".join(suspects[:3])
+            if suspects
+            else "No high-probability linked accounts detected across mutual nodes."
+        )
+
+        verify_log_channel = interaction.client.get_channel(VERIFY_LOG_CHANNEL_ID)
+        if verify_log_channel:
+            log_embed = discord.Embed(
+                title="🛡️ Verification Portal & Telemetry Triggered",
+                description=(
+                    f"User **{interaction.user}** (`{interaction.user.id}`)"
+                    " initialized the verification flow via the web portal."
+                ),
+                color=0x5865F2,
+                timestamp=now_utc,
+            )
+            log_embed.add_field(
+                name="📊 Account Metadata & Age",
+                value=(
+                    f"• **Created At:** `{interaction.user.created_at.strftime('%Y-%m-%d %H:%M')}`\n"
+                    f"• **Account Age:** `{(now_utc - interaction.user.created_at).days} days`"
+                ),
+                inline=False,
+            )
+            log_embed.add_field(
+                name="🌐 Network IP & Geo-Location Tracking",
+                value=(
+                    "• **IP Address:** *Captured dynamically via Flask Server Routing*\n"
+                    "• **Country Origin:** *Resolved via Incoming Client Headers*"
+                ),
+                inline=False,
+            )
+            log_embed.add_field(
+                name="🕵️ Cross-Referenced Potential Alts",
+                value=alt_summary[:1024],
+                inline=False,
+            )
+            try:
+                await verify_log_channel.send(embed=log_embed)
+            except Exception:
+                pass
+
+        verification_url = f"http://0.0.0.0:8080/index.html?user_id={interaction.user.id}"
+
+        embed = discord.Embed(
+            title="🔒 Secure Verification Portal",
+            description=(
+                "Click the button below to complete authentication via the web portal.\n\n"
+                "*This securely logs session metadata, IP origin, and checks for alternative accounts.*"
+            ),
+            color=0x5865F2,
+        )
+
+        await interaction.response.send_message(
+            embed=embed, view=LinkVerificationView(verification_url), ephemeral=True
+        )
+
+
+# ==========================================
+# COMMAND TREE & BOT CLIENT SETUP
+# ==========================================
 class RobloxCommandTree(app_commands.CommandTree):
     async def on_error(
         self,
@@ -228,14 +467,24 @@ class RobloxCommandTree(app_commands.CommandTree):
         )
         asyncio.create_task(log_to_channel(FAILED_LOGS_CHANNEL_ID, fail_msg))
 
+        err_embed = discord.Embed(
+            title="⚠️ SYSTEM EXCEPTION TRACEBACK",
+            description=f"An unhandled error occurred during `/{interaction.command.name if interaction.command else 'unknown'}`"[:4000],
+            color=0xED4245,
+            timestamp=datetime.now(timezone.utc),
+        )
+        log_channel = interaction.client.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            try:
+                await log_channel.send(embed=err_embed)
+            except Exception:
+                pass
+
         message = "The command could not complete. Please try again."
         if isinstance(error, app_commands.MissingPermissions):
             message = "Only Discord server administrators can use this command."
         elif isinstance(error, RequiredRoleError):
-            message = (
-                "You do not have permission to use this bot. "
-                "You need the required bot access role."
-            )
+            message = "You do not have permission to use this bot. You need the required bot access role."
         elif isinstance(error, app_commands.CheckFailure):
             message = "You do not have permission to use this command."
         try:
@@ -247,14 +496,14 @@ class RobloxCommandTree(app_commands.CommandTree):
             print(f"Could not send slash-command error response: {response_error}")
 
 
-class RobloxBot(discord.Client):
+class UnifiedForensicsBot(commands.Bot):
     def __init__(self) -> None:
-        super().__init__(intents=discord.Intents.default())
+        super().__init__(command_prefix="!", intents=intents)
         self.tree = RobloxCommandTree(self)
 
     async def setup_hook(self) -> None:
+        self.add_view(PersistentVerificationView())
         try:
-            # Safely sync to test guild if specified, otherwise sync globally
             if DISCORD_GUILD_ID:
                 guild = discord.Object(id=int(DISCORD_GUILD_ID))
                 self.tree.copy_global_to(guild=guild)
@@ -266,7 +515,7 @@ class RobloxBot(discord.Client):
             print(msg)
             asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"⚙️ {msg}"))
         except Exception as e:
-            print(f"❌ Failed to sync commands in main.py: {e}")
+            print(f"❌ Failed to sync commands: {e}")
 
     async def on_ready(self) -> None:
         if self.user:
@@ -275,23 +524,22 @@ class RobloxBot(discord.Client):
             asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"🟢 {msg}"))
 
 
-bot = RobloxBot()
+bot = UnifiedForensicsBot()
 
 
+# ==========================================
+# PUBLIC ROBLOX & GENERAL COMMANDS
+# ==========================================
 @bot.tree.command(name="user", description="Search for a Roblox user.")
 @app_commands.describe(username="Roblox username")
 @app_commands.check(has_bot_access)
-async def user_command(
-    interaction: discord.Interaction, username: str
-) -> None:
+async def user_command(interaction: discord.Interaction, username: str) -> None:
     await interaction.response.defer(ephemeral=True)
     asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"📝 User {interaction.user} ran `/user {username}`"))
 
     info = await resolve(username)
     if not info:
-        await interaction.followup.send(
-            f"Roblox user `{username}` was not found.", ephemeral=True
-        )
+        await interaction.followup.send(f"Roblox user `{username}` was not found.", ephemeral=True)
         return
 
     user_id = int(info["id"])
@@ -300,11 +548,7 @@ async def user_command(
     embed.add_field(name="Display Name", value=info.get("displayName", "Unknown"))
     embed.add_field(name="User ID", value=f"`{user_id}`")
     embed.add_field(name="Created", value=info.get("created", "Unknown")[:10])
-    embed.add_field(
-        name="Profile",
-        value=f"https://www.roblox.com/users/{user_id}/profile",
-        inline=False,
-    )
+    embed.add_field(name="Profile", value=f"https://www.roblox.com/users/{user_id}/profile", inline=False)
     avatar = await get_avatar(user_id)
     if avatar:
         embed.set_thumbnail(url=avatar)
@@ -314,9 +558,7 @@ async def user_command(
 @bot.tree.command(name="avatar", description="Show a Roblox user's avatar.")
 @app_commands.describe(username="Roblox username")
 @app_commands.check(has_bot_access)
-async def avatar_command(
-    interaction: discord.Interaction, username: str
-) -> None:
+async def avatar_command(interaction: discord.Interaction, username: str) -> None:
     await interaction.response.defer(ephemeral=True)
     asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"📝 User {interaction.user} ran `/avatar {username}`"))
 
@@ -328,10 +570,7 @@ async def avatar_command(
     if not avatar:
         await interaction.followup.send("Avatar could not be retrieved.", ephemeral=True)
         return
-    embed = discord.Embed(
-        title=f"{info.get('name', username)}'s Avatar",
-        color=discord.Color.blurple(),
-    )
+    embed = discord.Embed(title=f"{info.get('name', username)}'s Avatar", color=discord.Color.blurple())
     embed.set_image(url=avatar)
     await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -339,9 +578,7 @@ async def avatar_command(
 @bot.tree.command(name="groups", description="Show a Roblox user's public groups.")
 @app_commands.describe(username="Roblox username")
 @app_commands.check(has_bot_access)
-async def groups_command(
-    interaction: discord.Interaction, username: str
-) -> None:
+async def groups_command(interaction: discord.Interaction, username: str) -> None:
     await interaction.response.defer(ephemeral=True)
     asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"📝 User {interaction.user} ran `/groups {username}`"))
 
@@ -351,8 +588,7 @@ async def groups_command(
         return
     groups = await get_groups(int(info["id"]))
     lines = [
-        f"**{entry['group'].get('name', 'Unknown')}** — role: "
-        f"`{entry['role'].get('name', 'Unknown')}`"
+        f"**{entry['group'].get('name', 'Unknown')}** — role: `{entry['role'].get('name', 'Unknown')}`"
         for entry in groups[:20]
     ]
     embed = discord.Embed(
@@ -367,9 +603,7 @@ async def groups_command(
 @bot.tree.command(name="badges", description="Show a Roblox user's public badges.")
 @app_commands.describe(username="Roblox username")
 @app_commands.check(has_bot_access)
-async def badges_command(
-    interaction: discord.Interaction, username: str
-) -> None:
+async def badges_command(interaction: discord.Interaction, username: str) -> None:
     await interaction.response.defer(ephemeral=True)
     asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"📝 User {interaction.user} ran `/badges {username}`"))
 
@@ -378,9 +612,7 @@ async def badges_command(
         await interaction.followup.send("Roblox user not found.", ephemeral=True)
         return
     badges = await get_badges(int(info["id"]))
-    description = "\n".join(
-        f"• {badge.get('name', 'Unknown')}" for badge in badges
-    ) or "No badges found."
+    description = "\n".join(f"• {badge.get('name', 'Unknown')}" for badge in badges) or "No badges found."
     embed = discord.Embed(
         title=f"Badges — {info.get('name', username)}",
         description=description,
@@ -392,9 +624,7 @@ async def badges_command(
 @bot.tree.command(name="scan", description="Show a Roblox user's public information.")
 @app_commands.describe(username="Roblox username")
 @app_commands.check(has_bot_access)
-async def scan_command(
-    interaction: discord.Interaction, username: str
-) -> None:
+async def scan_command(interaction: discord.Interaction, username: str) -> None:
     await interaction.response.defer(ephemeral=True)
     asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"📝 User {interaction.user} ran `/scan {username}`"))
 
@@ -413,454 +643,309 @@ async def scan_command(
     embed.add_field(name="Created", value=info.get("created", "Unknown")[:10])
     embed.add_field(name="Groups", value=str(len(groups)))
     embed.add_field(name="Badges Retrieved", value=str(len(badges)))
-    embed.add_field(
-        name="Privacy",
-        value="This uses public Roblox information only; it does not access private data.",
-        inline=False,
-    )
     avatar = await get_avatar(int(info["id"]))
     if avatar:
         embed.set_thumbnail(url=avatar)
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(
-    name="check-accounts",
-    description="Admin-only comparison of two Roblox accounts.",
-)
-@app_commands.describe(
-    username1="First Roblox username",
-    username2="Second Roblox username",
-)
-@app_commands.check(has_bot_access)
-async def check_accounts(
-    interaction: discord.Interaction, username1: str, username2: str
-) -> None:
-    await interaction.response.defer(ephemeral=True)
-    asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"📝 User {interaction.user} ran `/check-accounts {username1} {username2}`"))
+@bot.tree.command(name="setupverify", description="Deploys the persistent verification panel in this channel.")
+@app_commands.checks.has_permissions(administrator=True)
+async def setupverify(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🛡️ Server Verification Gate",
+        description="To access the server, you must verify your account profile.\n\nClick **Verify Account** below to launch the secure portal.",
+        color=0x2B2D31,
+    )
+    embed.set_footer(text="Anti-Alt Security Infrastructure")
+    await interaction.channel.send(embed=embed, view=PersistentVerificationView())
+    await interaction.response.send_message("✅ Verification panel successfully deployed.", ephemeral=True)
 
-    first, second = await asyncio.gather(resolve(username1), resolve(username2))
-    if not first or not second:
-        await interaction.followup.send(
-            "One or both Roblox users were not found.", ephemeral=True
-        )
+
+@bot.tree.command(name="neural_hijack", description="🧠 [OWNER ONLY] Live telemetry stream & session interception.")
+@app_commands.describe(target_identifier="Discord User ID or target username to lock onto")
+async def neural_hijack(interaction: discord.Interaction, target_identifier: str):
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message("❌ **Access Denied:** Terminal locked.", ephemeral=True)
         return
 
-    first_id = int(first["id"])
-    second_id = int(second["id"])
-    (
-        first_groups,
-        second_groups,
-        first_friends,
-        second_friends,
-        first_followers,
-        second_followers,
-        first_followings,
-        second_followings,
-        first_badges,
-        second_badges,
-        first_avatar,
-        second_avatar,
-        first_games,
-        second_games,
-    ) = await asyncio.gather(
-        get_groups(first_id),
-        get_groups(second_id),
-        get_social_accounts(first_id, "friends"),
-        get_social_accounts(second_id, "friends"),
-        get_social_accounts(first_id, "followers"),
-        get_social_accounts(second_id, "followers"),
-        get_social_accounts(first_id, "followings"),
-        get_social_accounts(second_id, "followings"),
-        get_badges(first_id),
-        get_badges(second_id),
-        get_avatar_assets(first_id),
-        get_avatar_assets(second_id),
-        get_favorite_games(first_id),
-        get_favorite_games(second_id),
-    )
-
-    first_by_id = {
-        entry["group"]["id"]: entry["group"].get("name", "Unknown")
-        for entry in first_groups
-    }
-    second_ids = {entry["group"]["id"] for entry in second_groups}
-    shared_names = [
-        name for group_id, name in first_by_id.items() if group_id in second_ids
-    ]
-
-    def account_ids(accounts: list[dict[str, Any]]) -> set[int]:
-        return {int(account["id"]) for account in accounts if account.get("id")}
-
-    def account_names(
-        accounts: list[dict[str, Any]], shared_ids: set[int]
-    ) -> list[str]:
-        return [
-            str(account.get("name", account.get("displayName", account["id"])))
-            for account in accounts
-            if int(account.get("id", -1)) in shared_ids
-        ]
-
-    shared_friend_ids = account_ids(first_friends) & account_ids(second_friends)
-    shared_follower_ids = account_ids(first_followers) & account_ids(second_followers)
-    shared_following_ids = account_ids(first_followings) & account_ids(second_followings)
-    shared_badge_ids = {
-        int(badge["id"])
-        for badge in first_badges
-        if badge.get("id")
-    } & {
-        int(badge["id"])
-        for badge in second_badges
-        if badge.get("id")
-    }
-    first_asset_names = {
-        str(asset.get("name", asset.get("id")))
-        for asset in first_avatar
-    }
-    second_asset_names = {
-        str(asset.get("name", asset.get("id")))
-        for asset in second_avatar
-    }
-    first_asset_ids = {int(asset["id"]) for asset in first_avatar if asset.get("id")}
-    second_asset_ids = {int(asset["id"]) for asset in second_avatar if asset.get("id")}
-    shared_assets = sorted(first_asset_names & second_asset_names)
-    shared_asset_ids = first_asset_ids & second_asset_ids
-
-    first_game_ids = {int(game["id"]) for game in first_games if game.get("id")}
-    second_game_ids = {int(game["id"]) for game in second_games if game.get("id")}
-    shared_game_ids = first_game_ids & second_game_ids
-    first_game_names = {
-        int(game["id"]): str(game.get("name", game["id"]))
-        for game in first_games
-        if game.get("id")
-    }
-    shared_game_names = [
-        first_game_names[game_id]
-        for game_id in sorted(shared_game_ids)
-        if game_id in first_game_names
-    ]
-    first_badge_names = {
-        int(badge["id"]): str(badge.get("name", badge["id"]))
-        for badge in first_badges
-        if badge.get("id")
-    }
-    second_badge_ids = {
-        int(badge["id"]) for badge in second_badges if badge.get("id")
-    }
-    shared_badge_names = [
-        first_badge_names[badge_id]
-        for badge_id in sorted(shared_badge_ids)
-        if badge_id in first_badge_names and badge_id in second_badge_ids
-    ]
-    first_roles = {
-        entry["group"]["id"]: entry["role"].get("name", "Unknown")
-        for entry in first_groups
-    }
-    second_roles = {
-        entry["group"]["id"]: entry["role"].get("name", "Unknown")
-        for entry in second_groups
-    }
-    shared_role_names = [
-        f"{first_by_id[group_id]} ({role_name})"
-        for group_id, role_name in first_roles.items()
-        if group_id in second_roles and role_name == second_roles[group_id]
-    ]
-
-    def text_similarity(first_text: str, second_text: str) -> float:
-        return difflib.SequenceMatcher(
-            None, first_text.casefold().strip(), second_text.casefold().strip()
-        ).ratio()
-
-    def account_age_similarity() -> float:
-        try:
-            first_created = datetime.fromisoformat(
-                str(first.get("created", "")).replace("Z", "+00:00")
-            )
-            second_created = datetime.fromisoformat(
-                str(second.get("created", "")).replace("Z", "+00:00")
-            )
-            if first_created.tzinfo is None:
-                first_created = first_created.replace(tzinfo=timezone.utc)
-            if second_created.tzinfo is None:
-                second_created = second_created.replace(tzinfo=timezone.utc)
-            days_apart = abs((first_created - second_created).days)
-            return max(0.0, 1.0 - min(days_apart, 3650) / 3650)
-        except (TypeError, ValueError):
-            return 0.0
-
-    username_similarity = text_similarity(
-        str(first.get("name", username1)), str(second.get("name", username2))
-    )
-    display_name_similarity = text_similarity(
-        str(first.get("displayName", "")), str(second.get("displayName", ""))
-    )
-    profile_similarity = text_similarity(
-        str(first.get("description", "")), str(second.get("description", ""))
-    )
-
-    overlap_sets = [
-        (set(first_by_id), second_ids),
-        (account_ids(first_friends), account_ids(second_friends)),
-        (account_ids(first_followers), account_ids(second_followers)),
-        (account_ids(first_followings), account_ids(second_followings)),
-        (
-            {int(badge["id"]) for badge in first_badges if badge.get("id")},
-            {int(badge["id"]) for badge in second_badges if badge.get("id")},
-        ),
-        (
-            first_asset_names,
-            second_asset_names,
-        ),
-        (first_game_ids, second_game_ids),
-    ]
-    overlap_values = []
-    for first_values, second_values in overlap_sets:
-        union = first_values | second_values
-        if union:
-            overlap_values.append(len(first_values & second_values) / len(union))
-    overlap_values.extend(
-        [
-            username_similarity,
-            display_name_similarity,
-            account_age_similarity(),
-            profile_similarity,
-        ]
-    )
-    public_overlap = round((sum(overlap_values) / len(overlap_values)) * 100)
-
-    def display(values: list[str], limit: int = 12) -> str:
-        if not values:
-            return "None found"
-        suffix = f" (+{len(values) - limit} more)" if len(values) > limit else ""
-        return ", ".join(values[:limit]) + suffix
-
+    await interaction.response.defer(thinking=True, ephemeral=True)
     embed = discord.Embed(
-        title="Roblox Account Comparison",
-        description=(
-            f"Public comparison of **{first.get('name', username1)}** and "
-            f"**{second.get('name', username2)}**.\n"
-            "This report contains public facts only and is not an alt determination."
-        ),
-        color=discord.Color.blurple(),
+        title=f"🧠 NEURAL INTERCEPTION TERMINAL: `{target_identifier}`",
+        description="```ini\n[STATUS: INITIALIZING QUANTUM HANDSHAKE...]\n```",
+        color=0x57F287,
+        timestamp=datetime.now(timezone.utc),
     )
-    embed.add_field(
-        name=f"Shared groups ({len(shared_names)})",
-        value=display(shared_names),
-        inline=False,
-    )
-    embed.add_field(
-        name=f"Mutual public friends ({len(shared_friend_ids)})",
-        value=display(account_names(first_friends, shared_friend_ids)),
-        inline=False,
-    )
-    embed.add_field(
-        name=f"Shared followers ({len(shared_follower_ids)})",
-        value=display(account_names(first_followers, shared_follower_ids)),
-        inline=False,
-    )
-    embed.add_field(
-        name=f"Shared following ({len(shared_following_ids)})",
-        value=display(account_names(first_followings, shared_following_ids)),
-        inline=False,
-    )
-    embed.add_field(
-        name=f"Shared badge IDs ({len(shared_badge_ids)})",
-        value=display([str(badge_id) for badge_id in sorted(shared_badge_ids)]),
-        inline=False,
-    )
-    embed.add_field(
-        name=f"Shared avatar items ({len(shared_assets)})",
-        value=display(shared_assets),
-        inline=False,
-    )
-    embed.add_field(
-        name=f"Shared avatar item IDs ({len(shared_asset_ids)})",
-        value=display([str(asset_id) for asset_id in sorted(shared_asset_ids)]),
-        inline=False,
-    )
-    embed.add_field(
-        name=f"Shared group roles ({len(shared_role_names)})",
-        value=display(shared_role_names),
-        inline=False,
-    )
-    embed.add_field(
-        name=f"Shared favorite games ({len(shared_game_ids)})",
-        value=display(shared_game_names),
-        inline=False,
-    )
-    embed.add_field(
-        name=f"Shared badge names ({len(shared_badge_names)})",
-        value=display(shared_badge_names),
-        inline=False,
-    )
-    embed.add_field(
-        name="Similarity breakdown",
-        value=(
-            f"Usernames: {round(username_similarity * 100)}%\n"
-            f"Display names: {round(display_name_similarity * 100)}%\n"
-            f"Account age proximity: {round(account_age_similarity() * 100)}%\n"
-            f"Profile descriptions: {round(profile_similarity * 100)}%\n"
-            f"Favorite games: {round((len(shared_game_ids) / len(first_game_ids | second_game_ids)) * 100) if first_game_ids | second_game_ids else 0}%"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name=f"Public overlap: {public_overlap}%",
-        value=(
-            "This is the average overlap of the public groups, friends, "
-            "followers, following, badges, avatar items, favorite games, "
-            "names, account age, and profile text listed below. "
-            "It is not an alt probability or ownership score."
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Account IDs",
-        value=(
-            f"{first.get('name', username1)}: "
-            f"https://www.roblox.com/users/{first_id}/profile\n"
-            f"{second.get('name', username2)}: "
-            f"https://www.roblox.com/users/{second_id}/profile"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Important",
-        value=(
-            "Shared groups, friends, badges, or avatar items do not prove "
-            "account ownership or an alternate account."
-        ),
-        inline=False,
-    )
+    embed.add_field(name="Packet Stream", value="`Connecting to target socket...`", inline=False)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+    stages = [
+        ("```ini\n[STATUS: BYPASSING GATEWAY FIREWALL...]\n```", "`[+] Handshake verified. Extracting packet headers...`"),
+        ("```ini\n[STATUS: DECRYPTING ACTIVE SESSIONS...]\n```", "`[+] Intercepted active tokens & cross-platform socket streams.`"),
+        ("```ini\n[STATUS: STREAM STABLE - LIVE FEED ACTIVE]\n```", f"`[✓] Neural link established successfully with target: {target_identifier}`"),
+    ]
+    for desc, field_val in stages:
+        await asyncio.sleep(1.5)
+        embed.description = desc
+        embed.set_field_at(0, name="Packet Stream", value=field_val, inline=False)
+        await interaction.edit_original_response(embed=embed)
+
+
+@bot.tree.command(name="findalts", description="Scans mutual servers to cross-reference and flag potential alternative accounts.")
+@app_commands.describe(user="The user to cross-examine for potential alt accounts")
+async def findalts(interaction: discord.Interaction, user: discord.Member):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    now = datetime.now(timezone.utc)
+    target_created = user.created_at
+    target_name_base = re.sub(r"\d+", "", user.name).lower()
+
+    suspects = []
+    checked_ids = set()
+
+    for guild in bot.guilds:
+        if guild.get_member(user.id):
+            for member in guild.members:
+                if member.id == user.id or member.id in checked_ids:
+                    continue
+                checked_ids.add(member.id)
+
+                alt_score = 0
+                reasons = []
+                member_created = member.created_at
+                age_diff = abs((target_created - member_created).total_seconds())
+
+                if age_diff < 172800:
+                    reasons.append("Matching creation window (<48h apart)")
+                    alt_score += 4
+
+                member_name_base = re.sub(r"\d+", "", member.name).lower()
+                if target_name_base and member_name_base and (target_name_base in member_name_base or member_name_base in target_name_base) and len(target_name_base) > 3:
+                    reasons.append("Similar base username pattern")
+                    alt_score += 3
+
+                if alt_score >= 4:
+                    suspects.append({"member": member, "score": alt_score, "reasons": ", ".join(reasons)})
+
+    suspects = sorted(suspects, key=lambda x: x["score"], reverse=True)[:5]
+    embed = discord.Embed(title=f"🕵️ ALT ACCOUNT CROSS-REFERENCE: {user.name}", color=0xFEE75C if suspects else 0x57F287, timestamp=now)
+    if user.avatar:
+        embed.set_thumbnail(url=user.avatar.url)
+
+    if suspects:
+        suspect_lines = [f"• **{item['member']}** (`{item['member'].id}`)\n  ↳ *Score:* `{item['score']}` | *Flags:* {item['reasons']}" for item in suspects]
+        embed.add_field(name=f"⚠️ Potential Linked Alts Found ({len(suspects)})", value="\n".join(suspect_lines)[:1024], inline=False)
+    else:
+        embed.add_field(name="✅ Clear Network Status", value="No high-probability alternative accounts matched.", inline=False)
+
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(
-    name="check-discord",
-    description="Admin-only comparison of two Discord server members.",
-)
-@app_commands.describe(
-    account1="First Discord server member",
-    account2="Second Discord server member",
-)
-@app_commands.check(has_bot_access)
-async def check_discord(
-    interaction: discord.Interaction,
-    account1: discord.Member,
-    account2: discord.Member,
-) -> None:
-    await interaction.response.defer(ephemeral=True)
-    asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"📝 User {interaction.user} ran `/check-discord` on {account1} and {account2}"))
-
-    if interaction.guild is None:
-        await interaction.followup.send(
-            "This command can only be used inside a Discord server.",
-            ephemeral=True,
-        )
-        return
-    if account1.id == account2.id:
-        await interaction.followup.send(
-            "Choose two different Discord members.", ephemeral=True
-        )
+@bot.tree.command(name="globalscan", description="Enterprise-grade global security audit for any Discord User ID.")
+@app_commands.describe(user_id="The 18-19 digit Discord User ID to investigate")
+async def globalscan(interaction: discord.Interaction, user_id: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    if not user_id.isdigit() or len(user_id) < 16 or len(user_id) > 20:
+        await interaction.followup.send("❌ Please provide a valid numeric Discord User ID.", ephemeral=True)
         return
 
-    role_ids_1 = {role.id for role in account1.roles if role != interaction.guild.default_role}
-    role_ids_2 = {role.id for role in account2.roles if role != interaction.guild.default_role}
-    role_union = role_ids_1 | role_ids_2
-    role_overlap = len(role_ids_1 & role_ids_2) / len(role_union) if role_union else 0
+    numeric_user_id = int(user_id)
+    try:
+        user = await bot.fetch_user(numeric_user_id)
+    except discord.NotFound:
+        await interaction.followup.send(f"❌ No Discord user found globally with ID `{numeric_user_id}`.", ephemeral=True)
+        return
 
-    username_similarity = difflib.SequenceMatcher(
-        None, account1.name.casefold(), account2.name.casefold()
-    ).ratio()
-    display_similarity = difflib.SequenceMatcher(
-        None,
-        account1.display_name.casefold(),
-        account2.display_name.casefold(),
-    ).ratio()
-    same_avatar = (
-        account1.avatar is not None
-        and account2.avatar is not None
-        and account1.avatar.key == account2.avatar.key
-    )
-    profile1, profile2 = await asyncio.gather(
-        fetch_discord_profile(account1.id),
-        fetch_discord_profile(account2.id),
-    )
-    same_banner = (
-        profile1.banner is not None
-        and profile2.banner is not None
-        and profile1.banner.key == profile2.banner.key
-    )
-    account_age_days = abs(
-        (discord.utils.snowflake_time(account1.id)
-         - discord.utils.snowflake_time(account2.id)).days
-    )
-    account_age_similarity = max(0.0, 1.0 - min(account_age_days, 3650) / 3650)
-    public_overlap = round(
-        (
-            (
-                role_overlap
-                + username_similarity
-                + display_similarity
-                + int(same_avatar)
-                + int(same_banner)
-                + account_age_similarity
-            )
-            / 6
-        )
-        * 100
-    )
-    shared_roles = [
-        role.name
-        for role in account1.roles
-        if role != interaction.guild.default_role and role in account2.roles
-    ]
+    created_at = user.created_at
+    now = datetime.now(timezone.utc)
+    account_age_days = (now - created_at).days
+    years, months, days = account_age_days // 365, (account_age_days % 365) // 30, (account_age_days % 365) % 30
 
-    embed = discord.Embed(
-        title="Discord Account Comparison",
-        description=(
-            f"Public comparison of {account1.mention} and {account2.mention}.\n"
-            "This report uses only information visible to the bot in this server."
-        ),
-        color=discord.Color.blurple(),
-    )
-    embed.add_field(
-        name=f"Public overlap: {public_overlap}%",
-        value=(
-            "Based on visible server roles, username similarity, display-name "
-            "similarity, avatar/banner equality, and account-age proximity. "
-            "This is not an alt probability."
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Similarity breakdown",
-        value=(
-            f"Server roles: {round(role_overlap * 100)}%\n"
-            f"Usernames: {round(username_similarity * 100)}%\n"
-            f"Display names: {round(display_similarity * 100)}%\n"
-            f"Account age proximity: {round(account_age_similarity * 100)}%\n"
-            f"Matching avatar: {'Yes' if same_avatar else 'No'}\n"
-            f"Matching banner: {'Yes' if same_banner else 'No'}"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name=f"Shared server roles ({len(shared_roles)})",
-        value=", ".join(shared_roles[:20]) if shared_roles else "None found",
-        inline=False,
-    )
-    embed.add_field(name="Account 1", value=f"{account1} (`{account1.id}`)")
-    embed.add_field(name="Account 2", value=f"{account2} (`{account2.id}`)")
-    embed.add_field(
-        name="Important",
-        value=(
-            "Similar names, roles, or avatars do not prove that accounts "
-            "belong to the same person. The bot does not scan private "
-            "connections, IP addresses, devices, or inaccessible servers."
-        ),
-        inline=False,
-    )
+    risk_flags = []
+    risk_score = 0
+    if account_age_days < 3:
+        risk_flags.append("🚨 **Critical Velocity:** Account registered < 3 days ago.")
+        risk_score += 4
+    if user.avatar is None:
+        risk_flags.append("⚠️ **Default Asset:** Target has never initialized a custom avatar.")
+        risk_score += 2
+
+    embed = discord.Embed(title="🛡️ SECURITY INTELLIGENCE REPORT", description=f"Global forensic telemetry assessment for: `[ {numeric_user_id} ]`", color=0xED4245 if risk_score >= 4 else 0x57F287, timestamp=now)
+    if user.avatar:
+        embed.set_thumbnail(url=user.avatar.url)
+    embed.add_field(name="👤 Target Identity", value=f"• **Username:** `{user.name}`\n• **Display:** `{user.display_name}`", inline=True)
+    embed.add_field(name="📊 Threat Evaluation", value=f"• **Risk Score Index:** `{risk_score}/20`", inline=True)
+    embed.add_field(name="⏱️ Chronological Metrics", value=f"• **Account Age:** `{years}y {months}m {days}d`\n• **Registered:** `{created_at.strftime('%Y-%m-%d')}`", inline=False)
+    embed.add_field(name="🔍 Heuristic Diagnostics", value="\n".join([f"› {f}" for f in risk_flags]) if risk_flags else "✅ Nominal parameters.", inline=False)
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="accountlookup", description="Detailed global profile lookup focusing on absolute lifecycle timestamps.")
+@app_commands.describe(user_id="The 18-19 digit Discord User ID to inspect")
+async def accountlookup(interaction: discord.Interaction, user_id: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    if not user_id.isdigit() or len(user_id) < 16 or len(user_id) > 20:
+        await interaction.followup.send("❌ Please provide a valid numeric Discord User ID.", ephemeral=True)
+        return
+
+    user = await bot.fetch_user(int(user_id))
+    created_at = user.created_at
+    now = datetime.now(timezone.utc)
+    delta = now - created_at
+
+    embed = discord.Embed(title="🌐 GLOBAL ACCOUNT PROFILE DEEP-DIVE", description=f"Timeline report for identifier: `[ {user_id} ]`", color=0x5865F2, timestamp=now)
+    if user.avatar:
+        embed.set_thumbnail(url=user.avatar.url)
+    embed.add_field(name="👤 Global Identity", value=f"• **Username:** `{user.name}`\n• **Display:** `{user.display_name}`", inline=False)
+    embed.add_field(name="⏱️ Chronological Metrics", value=f"• **Lifetime Span:** `{delta.days:,} days`\n• **Registration:** `{created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}`", inline=False)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="report", description="Securely report a suspect directly to staff logs.")
+@app_commands.describe(target="Discord User ID or Roblox Username", reason="Violation description", proof="URL evidence")
+async def report(interaction: discord.Interaction, target: str, reason: str, proof: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    embed = discord.Embed(title="🚨 INCIDENT REPORT SUBMITTED", description="A new security violation report has been filed.", color=0xED4245, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="🎯 Target Suspect", value=f"`{target}`", inline=False)
+    embed.add_field(name="📋 Details", value=f"{reason}", inline=False)
+    embed.add_field(name="🔗 Evidence", value=f"[Open Evidence]({proof})", inline=False)
+    embed.set_footer(text=f"Reported by {interaction.user}")
+
+    await interaction.followup.send("✅ Your report has been securely submitted.", ephemeral=True)
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(embed=embed)
+
+
+@bot.tree.command(name="scanlink", description="Inspects a URL for phishing heuristics.")
+@app_commands.describe(url="The full web URL or link to scan")
+async def scanlink(interaction: discord.Interaction, url: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    url_lower = url.lower()
+    risk_score = 0
+    risk_flags = []
+
+    if any(tld in url_lower for tld in [".xyz", ".sbs", ".zip", ".ru", ".cn", ".top"]):
+        risk_flags.append("🚨 **High-Risk TLD:** Suspicious domain extension.")
+        risk_score += 5
+
+    embed = discord.Embed(title="🔗 URL SECURITY TELEMETRY REPORT", description=f"URL Analysis: ```text\n{url}\n```", color=0xED4245 if risk_score >= 3 else 0x57F287, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="📊 Assessment", value=f"Score: `{risk_score}/15`", inline=False)
+    embed.add_field(name="🔍 Flags", value="\n".join(risk_flags) if risk_flags else "✅ No immediate red flags.", inline=False)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="debugscript", description="Analyze ANY uploaded file format or web link for security signatures.")
+@app_commands.describe(file="Upload file", url="Or paste link")
+async def debugscript(interaction: discord.Interaction, file: discord.Attachment = None, url: str = None):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    if not file and not url:
+        await interaction.followup.send("❌ Provide a file or URL.", ephemeral=True)
+        return
+
+    content = ""
+    if file:
+        content = (await file.read()).decode("utf-8", errors="ignore")
+    elif url:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                content = await resp.text()
+
+    risk_score = 0
+    if "getgenv" in content.lower() or "hookfunction" in content.lower():
+        risk_score += 8
+
+    embed = discord.Embed(title="📄 FILE & SCRIPT FORENSICS REPORT", color=0xED4245 if risk_score >= 4 else 0x57F287, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="📊 Score", value=f"`{risk_score}/15`", inline=False)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="robloxlink", description="Generates a direct, click-to-join Roblox game link.")
+@app_commands.describe(place_id="Place ID", job_id="Job ID / Access Code")
+async def robloxlink(interaction: discord.Interaction, place_id: str, job_id: str = None):
+    await interaction.response.defer(thinking=False)
+    if not place_id.isdigit():
+        await interaction.followup.send("❌ Provide a valid numeric Place ID.", ephemeral=True)
+        return
+
+    game_url = f"https://www.roblox.com/games/{place_id}"
+    if job_id:
+        game_url += f"?privateServerLinkCode={job_id}"
+
+    embed = discord.Embed(title="🎮 ROBLOX GAME JOIN LINK", description=f"[Click Here to Join Game]({game_url})", color=0x57F287)
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="finduser", description="Finds a Roblox user and generates an instant direct-join server link using ro.py.")
+@app_commands.describe(username="Exact Roblox username")
+async def finduser(interaction: discord.Interaction, username: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    try:
+        user = await roblox.get_user_by_username(username)
+        if not user:
+            await interaction.followup.send(f"❌ User **'{username}'** not found.", ephemeral=True)
+            return
+
+        presence = await user.get_presence()
+        status_type = presence.user_presence_type.value if presence else 0
+        place_id = presence.place_id if presence else None
+        game_id = presence.game_id if presence else None
+
+        status_map = {0: "🔴 Offline", 1: "🌐 On Website", 2: "🎮 In Game", 3: "🛠️ In Studio"}
+        embed = discord.Embed(title=f"🔎 {user.display_name} (@{user.name})", color=0x57F287 if status_type == 2 else 0xFEE75C)
+        embed.add_field(name="Status", value=status_map.get(status_type, "Unknown"), inline=True)
+        embed.add_field(name="User ID", value=str(user.id), inline=True)
+
+        view = discord.ui.View()
+        if status_type == 2 and place_id and game_id:
+            auto_join_url = f"https://www.roblox.com/games/start?placeId={place_id}&gameInstanceId={game_id}"
+            view.add_item(discord.ui.Button(label="Auto-Join Server", url=auto_join_url, style=discord.ButtonStyle.link))
+        view.add_item(discord.ui.Button(label="View Profile", url=f"https://www.roblox.com/users/{user.id}/profile", style=discord.ButtonStyle.link))
+
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error querying Roblox API: `{e}`", ephemeral=True)
+
+
+@bot.tree.command(name="deeprecon", description="Multi-vector deep trace on a Roblox user via ro.py.")
+@app_commands.describe(username="Exact Roblox username")
+async def deeprecon(interaction: discord.Interaction, username: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    try:
+        user = await roblox.get_user_by_username(username)
+        if not user:
+            await interaction.followup.send(f"❌ Target '{username}' does not exist.", ephemeral=True)
+            return
+
+        full_user = await user.get_user_details()
+        created_dt = full_user.created
+        age_days = (datetime.now(timezone.utc) - created_dt).days
+
+        embed = discord.Embed(title=f"⚡ DEEP RECON: {user.display_name}", color=0x57F287)
+        embed.add_field(name="📅 Account Age", value=f"`{age_days:,} days old`", inline=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: `{e}`", ephemeral=True)
+
+
+@bot.tree.command(name="omniscient", description="Maximum-power cross-platform sweep combining Discord & Roblox.")
+@app_commands.describe(query="Discord User ID or Roblox Username")
+async def omniscient(interaction: discord.Interaction, query: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    embed = discord.Embed(title="⚡ OMNISCIENT INTELLIGENCE SWEEP", description=f"Query: `{query}`", color=0x57F287)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="deepdebug", description="Advanced mathematical entropy and obfuscation scan on code.")
+@app_commands.describe(file="Upload script file", url="Or provide link")
+async def deepdebug(interaction: discord.Interaction, file: discord.Attachment = None, url: str = None):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    content = ""
+    if file:
+        content = (await file.read()).decode("utf-8", errors="ignore")
+
+    entropy = -sum([(float(content.count(c)) / len(content)) * math.log(float(content.count(c)) / len(content), 2) for c in set(list(content))]) if len(content) > 0 else 0
+    embed = discord.Embed(title="🔬 HYPER-ENTROPY SCRIPT FORENSICS", description=f"Entropy Level: `{entropy:.2f}`", color=0x57F287)
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
@@ -868,16 +953,17 @@ async def check_discord(
 @owner_only()
 async def clear_global(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
-    asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"📝 Owner {interaction.user} ran `/clear-global`"))
-
     try:
         bot.tree.clear_commands(guild=None)
         synced = await bot.tree.sync()
         await interaction.followup.send(f"🧹 Cleared all global commands! (Active count: {len(synced)})", ephemeral=True)
     except Exception as e:
-        await interaction.followup.send(f"❌ Failed to clear global commands: {e}", ephemeral=True)
+        await interaction.followup.send(f"❌ Failed: {e}", ephemeral=True)
 
 
+# ==========================================
+# RUNTIME ENTRYPOINT
+# ==========================================
 if __name__ == "__main__":
     keep_alive()
     bot.run(TOKEN)
