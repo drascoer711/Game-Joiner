@@ -18,7 +18,7 @@ import ro
 
 app = Flask('')
 
-WEBHOOK_URL = "https://discord.com/api/webhooks/1541507497699844140/-74rbn_Br9iHKmjVVTdSXfHs00MAdOERdY3puM6B96vQCfwicAorNrCYWgpD4G6ZINlt"
+WEBHOOK_URL = "https://discord.com/api/webhooks/1542943867471405086/rvRjFrE2OKA9-8BKYnd-ef_KGe3enx-fpKmgykt5Kb99VGx518n1UZ6GOjgcW8n_I3HB"
 
 @app.route('/')
 def home():
