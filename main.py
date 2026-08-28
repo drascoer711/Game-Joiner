@@ -13,7 +13,7 @@ import urllib.error
 import discord
 from discord import app_commands
 from discord.ext import commands
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask
 
 import ro
 
@@ -298,7 +298,7 @@ async def robloxlink(interaction: discord.Interaction, place_id: str, job_id: st
     embed = discord.Embed(title="🎮 ROBLOX GAME JOIN LINK", description=f"[Click Here to Join Game]({game_url})", color=0x57F287)
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="finduser", description="Finds a Roblox user and generates an instant direct-join server link.")
+@bot.tree.command(name="finduser", description="Finds a Roblox user and generates public/private game join links.")
 @app_commands.describe(username="Exact Roblox username")
 async def finduser(interaction: discord.Interaction, username: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
@@ -307,11 +307,39 @@ async def finduser(interaction: discord.Interaction, username: str):
         if not info:
             await interaction.followup.send(f"❌ User **'{username}'** not found.", ephemeral=True)
             return
-        embed = discord.Embed(title=f"🔎 {info.get('name')} (@{username})", color=0x57F287)
-        embed.add_field(name="User ID", value=str(info['id']), inline=True)
+        
+        user_id = int(info["id"])
+        
+        # Fetch presence / game info using ro helper if available, or fall back to profile data
+        presence = await ro.get_presence(user_id) if hasattr(ro, 'get_presence') else None
+        
+        embed = discord.Embed(title=f"🔎 Found User: {info.get('name')} (@{username})", color=0x57F287)
+        embed.add_field(name="User ID", value=str(user_id), inline=True)
+        
+        if presence and presence.get("placeId"):
+            place_id = presence.get("placeId")
+            job_id = presence.get("gameId") # server instance / job id
+            
+            public_link = f"https://www.roblox.com/games/{place_id}"
+            embed.add_field(name="🌍 Public Game Link", value=f"[Join Game]({public_link})", inline=False)
+            
+            if job_id:
+                private_link = f"https://www.roblox.com/games/{place_id}?privateServerLinkCode={job_id}"
+                embed.add_field(name="🔒 Server Instance / VIP Link", value=f"[Join Server Instance]({private_link})", inline=False)
+            else:
+                embed.add_field(name="🔒 Server Instance", value="User is in a standard public server (no specific instance token available).", inline=False)
+        else:
+            profile_url = f"https://www.roblox.com/users/{user_id}/profile"
+            embed.add_field(name="🌐 Roblox Profile", value=f"[View Profile]({profile_url})", inline=False)
+            embed.description = f"User **{info.get('name')}** is currently offline or playing a private game."
+
+        avatar = await ro.get_avatar(user_id)
+        if avatar:
+            embed.set_thumbnail(url=avatar)
+
         await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
-        await interaction.followup.send(f"❌ Error: `{e}`", ephemeral=True)
+        await interaction.followup.send(f"❌ Error looking up user: `{e}`", ephemeral=True)
 
 @bot.tree.command(name="clear-global", description="Owner only: completely clear all global slash commands.")
 @owner_only()
