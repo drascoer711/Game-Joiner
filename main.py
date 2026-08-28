@@ -8,6 +8,7 @@ import asyncio
 import threading
 import json
 import urllib.request
+import urllib.error
 
 import discord
 from discord import app_commands
@@ -130,7 +131,11 @@ async def log_verification_event(user_id: str, ip_address: str, user_agent: str,
             data=json.dumps(payload).encode('utf-8'),
             headers={'Content-Type': 'application/json'}
         )
-        urllib.request.urlopen(req, timeout=5)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            print(f"Webhook delivered successfully: HTTP {resp.status}")
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8')
+        print(f"Failed to process webhook verification log: HTTP {e.code} - {error_body}")
     except Exception as e:
         print(f"Failed to process webhook verification log: {e}")
 
