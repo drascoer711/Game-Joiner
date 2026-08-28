@@ -159,10 +159,13 @@ class UnifiedForensicsBot(commands.Bot):
   async def setup_hook(self):
     self.add_view(PersistentVerificationView())
     try:
-      synced = await self.tree.sync()
-      print(f"✅ Successfully synced {len(synced)} global slash commands.")
+      # REPLACE 1414231205095673858 WITH YOUR ACTUAL DISCORD SERVER (GUILD) ID FOR INSTANT SYNCING
+      guild_id = discord.Object(id=1414231205095673858)
+      self.tree.copy_global_to(guild=guild_id)
+      synced = await self.tree.sync(guild=guild_id)
+      print(f"✅ Successfully synced {len(synced)} commands to test server.")
     except Exception as e:
-      print(f"❌ Failed to sync global commands: {e}")
+      print(f"❌ Failed to sync commands: {e}")
 
 
 bot = UnifiedForensicsBot()
