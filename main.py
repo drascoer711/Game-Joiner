@@ -93,7 +93,6 @@ def api_verify():
     if not user_id:
         return jsonify({"error": "Missing user identifier"}), 400
 
-    # Dispatch to Discord webhook with IP data
     future = asyncio.run_coroutine_threadsafe(
         log_verification_event(user_id, ip_address, user_agent, country), 
         bot.loop
@@ -109,7 +108,6 @@ async def log_verification_event(user_id: str, ip_address: str, user_agent: str,
     try:
         user = bot.get_user(int(user_id)) or await bot.fetch_user(int(user_id))
         
-        # Send telemetry data directly to the provided webhook URL
         payload = {
             "embeds": [{
                 "title": "✅ Web Verification Completed",
@@ -409,7 +407,7 @@ async def finduser(interaction: discord.Interaction, username: str):
     try:
         info = await ro.resolve(username)
         if not info:
-            await interaction.followup.send(f"❌ User **'{username}'** not found.", ephemeral=True)
+            await interaction.followup.save(f"❌ User **'{username}'** not found.", ephemeral=True)
             return
         embed = discord.Embed(title=f"🔎 {info.get('name')} (@{username})", color=0x57F287)
         embed.add_field(name="User ID", value=str(info['id']), inline=True)
