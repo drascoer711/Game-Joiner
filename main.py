@@ -25,120 +25,6 @@ WEBHOOK_URL = "https://discord.com/api/webhooks/1542943867471405086/rvRjFrE2OKA9
 def home():
     return "Bot and Verification Server are online and running!"
 
-VERIFY_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Verification Portal</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121214; color: #e1e1e6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .card { background: #202024; padding: 40px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); text-align: center; max-width: 400px; width: 100%; border: 1px solid #323238; }
-        h2 { color: #00b37e; margin-bottom: 10px; }
-        p { color: #9999a1; font-size: 14px; line-height: 1.5; margin-bottom: 24px; }
-        .btn { background: #00b37e; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; cursor: pointer; width: 100%; font-size: 16px; transition: background 0.2s; }
-        .btn:hover { background: #00875f; }
-        .status { margin-top: 15px; font-size: 12px; color: #7c7c8a; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h2>🛡️ Secure Verification</h2>
-        <p>Complete authentication to sync your security tokens and verify your node access within the community database.</p>
-        <button class="btn" onclick="verifySession()">Authorize & Verify</button>
-        <div class="status" id="statusText">Awaiting user authorization...</div>
-    </div>
-    <script>
-        async function verifySession() {
-            const urlParams = new URLSearchParams(window.location.search);
-            const userId = urlParams.get('user_id');
-            const statusEl = document.getElementById('statusText');
-            
-            statusEl.innerText = "Transmitting session telemetry...";
-            
-            try {
-                const response = await fetch('/api/verify', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ user_id: userId })
-                });
-                const data = await response.json();
-                if (response.ok) {
-                    statusEl.innerText = "✅ Verification successful! You can now close this tab.";
-                    document.querySelector('.btn').style.display = 'none';
-                } else {
-                    statusEl.innerText = "❌ Error: " + (data.error || "Unknown error occurred.");
-                }
-            } catch (e) {
-                statusEl.innerText = "❌ Network transport failed.";
-            }
-        }
-    </script>
-</body>
-</html>
-"""
-
-@app.route('/index.html')
-def verify_page():
-    return render_template_string(VERIFY_TEMPLATE)
-
-@app.route('/api/verify', methods=['POST'])
-def api_verify():
-    data = request.get_json() or {}
-    user_id = data.get('user_id')
-    
-    ip_address = request.headers.get('X-Forwarded-For', request.remote_addr)
-    user_agent = request.headers.get('User-Agent', 'Unknown')
-    country = request.headers.get('CF-IPCountry', request.headers.get('X-Render-IP-Country', 'Unknown'))
-    
-    if not user_id:
-        return jsonify({"error": "Missing user identifier"}), 400
-
-    future = asyncio.run_coroutine_threadsafe(
-        log_verification_event(user_id, ip_address, user_agent, country), 
-        bot.loop
-    )
-    try:
-        future.result(timeout=5)
-    except Exception:
-        pass
-
-    return jsonify({"status": "success", "message": "Telemetry logged and verified."})
-
-async def log_verification_event(user_id: str, ip_address: str, user_agent: str, country: str):
-    try:
-        user = bot.get_user(int(user_id)) or await bot.fetch_user(int(user_id))
-        
-        payload = {
-            "embeds": [{
-                "title": "✅ Web Verification Completed",
-                "description": f"User **{user}** (`{user_id}`) successfully authenticated via the web browser portal.",
-                "color": 5733767,
-                "fields": [
-                    {
-                        "name": "🌐 Captured Telemetry & Network Route",
-                        "value": f"• **IP Address:** `{ip_address}`\n• **Country Origin:** `{country}`\n• **Browser User-Agent:** `{user_agent[:150]}`",
-                        "inline": False
-                    }
-                ],
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            }]
-        }
-        
-        req = urllib.request.Request(
-            WEBHOOK_URL,
-            data=json.dumps(payload).encode('utf-8'),
-            headers={'Content-Type': 'application/json'}
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            print(f"Webhook delivered successfully: HTTP {resp.status}")
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode('utf-8')
-        print(f"Failed to process webhook verification log: HTTP {e.code} - {error_body}")
-    except Exception as e:
-        print(f"Failed to process webhook verification log: {e}")
-
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("DISCORD_BOT_TOKEN is missing from environment variables.")
@@ -246,8 +132,8 @@ class PersistentVerificationView(discord.ui.View):
         except Exception:
             pass
 
-        render_external_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:10000")
-        verification_url = f"{render_external_url}/index.html?user_id={interaction.user.id}"
+        vercel_url = "https://website2-umber-zeta.vercel.app"
+        verification_url = f"{vercel_url}/index.html?user_id={interaction.user.id}"
 
         embed = discord.Embed(title="🔒 Secure Verification Portal", description="Click the button below to complete authentication via the web portal.", color=0x5865F2)
         await interaction.response.send_message(embed=embed, view=LinkVerificationView(verification_url), ephemeral=True)
