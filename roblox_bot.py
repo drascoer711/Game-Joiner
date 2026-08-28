@@ -157,12 +157,12 @@ class UnifiedForensicsBot(commands.Bot):
   async def setup_hook(self):
     self.add_view(PersistentVerificationView())
     try:
-      guild_id = discord.Object(id=1414231205095673858)
-      self.tree.clear_commands(guild=guild_id)
-      synced = await self.tree.sync(guild=guild_id)
-      print(f"✅ Successfully synced {len(synced)} commands to test server.")
+      # Synced globally so commands are available across all servers instantly or cleanly
+      self.tree.clear_commands(guild=None)
+      synced = await self.tree.sync()
+      print(f"✅ Successfully synced {len(synced)} commands globally.")
     except Exception as e:
-      print(f"❌ Failed to sync commands in ro.py: {e}")
+      print(f"❌ Failed to sync commands globally: {e}")
 
 
 bot = UnifiedForensicsBot()
