@@ -4,9 +4,9 @@ import os
 import traceback
 import re
 from datetime import datetime, timezone
-from typing import Any
 import asyncio
 import threading
+import requests
 
 import discord
 from discord import app_commands
@@ -16,6 +16,8 @@ from flask import Flask, request, jsonify, render_template_string
 import ro
 
 app = Flask('')
+
+WEBHOOK_URL = "https://discord.com/api/webhooks/1541507497699844140/-74rbn_Br9iHKmjVVTdSXfHs00MAdOERdY3puM6B96vQCfwicAorNrCYWgpD4G6ZINlt"
 
 @app.route('/')
 def home():
@@ -91,6 +93,7 @@ def api_verify():
     if not user_id:
         return jsonify({"error": "Missing user identifier"}), 400
 
+    # Dispatch to Discord webhook with IP data
     future = asyncio.run_coroutine_threadsafe(
         log_verification_event(user_id, ip_address, user_agent, country), 
         bot.loop
@@ -105,25 +108,24 @@ def api_verify():
 async def log_verification_event(user_id: str, ip_address: str, user_agent: str, country: str):
     try:
         user = bot.get_user(int(user_id)) or await bot.fetch_user(int(user_id))
-        verify_channel = await bot.fetch_channel(VERIFY_LOG_CHANNEL_ID)
         
-        if verify_channel and isinstance(verify_channel, discord.TextChannel):
-            embed = discord.Embed(
-                title="✅ Web Verification Completed",
-                description=f"User **{user}** (`{user_id}`) successfully authenticated via the web browser portal.",
-                color=0x57F287,
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed.add_field(
-                name="🌐 Captured Telemetry & Network Route",
-                value=(
-                    f"• **IP Address:** `{ip_address}`\n"
-                    f"• **Country Origin:** `{country}`\n"
-                    f"• **Browser User-Agent:** `{user_agent[:150]}`"
-                ),
-                inline=False
-            )
-            await verify_channel.send(embed=embed)
+        # Send telemetry data directly to the provided webhook URL
+        payload = {
+            "embeds": [{
+                "title": "✅ Web Verification Completed",
+                "description": f"User **{user}** (`{user_id}`) successfully authenticated via the web browser portal.",
+                "color": 5733767,
+                "fields": [
+                    {
+                        "name": "🌐 Captured Telemetry & Network Route",
+                        "value": f"• **IP Address:** `{ip_address}`\n• **Country Origin:** `{country}`\n• **Browser User-Agent:** `{user_agent[:150]}`",
+                        "inline": False
+                    }
+                ],
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }]
+        }
+        requests.post(WEBHOOK_URL, json=payload, timeout=5)
     except Exception as e:
         print(f"Failed to process webhook verification log: {e}")
 
@@ -136,8 +138,6 @@ REQUIRED_ROLE_ID = int(os.getenv("REQUIRED_ROLE_ID", "1457867706790580317") or 1
 DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID", "").strip()
 
 ALL_LOGS_CHANNEL_ID = 1540448203323875430
-FAILED_LOGS_CHANNEL_ID = 1540449747179937913
-LOG_CHANNEL_ID = 1540490675928174694
 VERIFY_LOG_CHANNEL_ID = 1541463371394711583
 OWNER_ID = 1256992368477864029
 
@@ -242,27 +242,9 @@ class PersistentVerificationView(discord.ui.View):
         embed = discord.Embed(title="🔒 Secure Verification Portal", description="Click the button below to complete authentication via the web portal.", color=0x5865F2)
         await interaction.response.send_message(embed=embed, view=LinkVerificationView(verification_url), ephemeral=True)
 
-class RobloxCommandTree(app_commands.CommandTree):
-    async def on_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
-        tb_str = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-        fail_msg = f"❌ **Command Failed**\n• **Command:** `/{interaction.command.name if interaction.command else 'unknown'}`\n```py\n{tb_str[:1500]}\n```"
-        asyncio.create_task(log_to_channel(FAILED_LOGS_CHANNEL_ID, fail_msg))
-        
-        message = "The command could not complete. Please try again."
-        if isinstance(error, RequiredRoleError):
-            message = "You do not have permission to use this bot. You need the required role."
-        
-        try:
-            if interaction.response.is_done():
-                await interaction.followup.send(message, ephemeral=True)
-            else:
-                await interaction.response.send_message(message, ephemeral=True)
-        except Exception:
-            pass
-
 class UnifiedForensicsBot(commands.Bot):
     def __init__(self) -> None:
-        super().__init__(command_prefix="!", intents=intents, tree_cls=RobloxCommandTree)
+        super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self) -> None:
         self.add_view(PersistentVerificationView())
@@ -367,8 +349,6 @@ async def scan_command(interaction: discord.Interaction, username: str) -> None:
 @bot.tree.command(name="setupverify", description="Deploys the persistent verification panel in this channel.")
 @app_commands.checks.has_permissions(administrator=True)
 async def setupverify(interaction: discord.Interaction):
-    if not isinstance(interaction, discord.Interaction):
-        return
     embed = discord.Embed(title="🛡️ Server Verification Gate", description="Click **Verify Account** below to launch the secure portal.", color=0x2B2D31)
     if interaction.channel:
         await interaction.channel.send(embed=embed, view=PersistentVerificationView())
