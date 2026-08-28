@@ -175,11 +175,26 @@ async def monitor_roblox_datacenters():
     await bot.wait_until_ready()
     
     sample_cities = [
-        ("Warsaw", "Warsaw, Mazovia, PL"),
-        ("Tokyo", "Tokyo, Kantō, JP"),
+        ("Ashburn", "Ashburn, Virginia, US"),
+        ("Dallas", "Dallas, Texas, US"),
+        ("Chicago", "Chicago, Illinois, US"),
+        ("Los Angeles", "Los Angeles, California, US"),
+        ("San Jose", "San Jose, California, US"),
+        ("Seattle", "Seattle, Washington, US"),
+        ("Atlanta", "Atlanta, Georgia, US"),
+        ("Miami", "Miami, Florida, US"),
+        ("New York City", "New York City, New York, US"),
         ("Frankfurt", "Frankfurt, Hesse, DE"),
-        ("São Paulo", "São Paulo, BR"),
+        ("London", "London, United Kingdom"),
+        ("Warsaw", "Warsaw, Mazovia, PL"),
+        ("Paris", "Paris, France"),
+        ("Amsterdam", "Amsterdam, Netherlands"),
+        ("Tokyo", "Tokyo, Kantō, JP"),
+        ("Singapore", "Singapore, SG"),
+        ("Hong Kong", "Hong Kong, HK"),
+        ("Mumbai", "Mumbai, India"),
         ("Sydney", "Sydney, New South Wales, AU"),
+        ("São Paulo", "São Paulo, BR"),
         ("Bahrain", "Manama, BH")
     ]
     
@@ -188,7 +203,7 @@ async def monitor_roblox_datacenters():
             await asyncio.sleep(1800) # Runs every 30 minutes
             
             city, location_str = random.choice(sample_cities)
-            dc_id = random.randint(20000, 35000)
+            dc_id = random.randint(18000, 35000)
             
             payload = {
                 "content": "@datacenter ping",
@@ -371,12 +386,27 @@ async def checkallservers(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
         active_nodes = [
-            {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": 26330, "status": "🟢 Online"},
-            {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": 21402, "status": "🟢 Online"},
-            {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": 19823, "status": "🟢 Online"},
-            {"city": "São Paulo", "location": "São Paulo, BR", "id": 24110, "status": "🟡 High Latency"},
-            {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": 18559, "status": "🟢 Online"},
-            {"city": "Bahrain", "location": "Manama, BH", "id": 31204, "status": "🟢 Online"}
+            {"city": "Ashburn", "location": "Ashburn, Virginia, US", "id": 18201},
+            {"city": "Dallas", "location": "Dallas, Texas, US", "id": 18210},
+            {"city": "Chicago", "location": "Chicago, Illinois, US", "id": 18215},
+            {"city": "Los Angeles", "location": "Los Angeles, California, US", "id": 18220},
+            {"city": "San Jose", "location": "San Jose, California, US", "id": 18225},
+            {"city": "Seattle", "location": "Seattle, Washington, US", "id": 18230},
+            {"city": "Atlanta", "location": "Atlanta, Georgia, US", "id": 18235},
+            {"city": "Miami", "location": "Miami, Florida, US", "id": 18240},
+            {"city": "New York City", "location": "New York City, New York, US", "id": 18245},
+            {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": 19823},
+            {"city": "London", "location": "London, United Kingdom", "id": 19830},
+            {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": 26330},
+            {"city": "Paris", "location": "Paris, France", "id": 19840},
+            {"city": "Amsterdam", "location": "Amsterdam, Netherlands", "id": 19850},
+            {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": 21402},
+            {"city": "Singapore", "location": "Singapore, SG", "id": 21500},
+            {"city": "Hong Kong", "location": "Hong Kong, HK", "id": 21510},
+            {"city": "Mumbai", "location": "Mumbai, India", "id": 21520},
+            {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": 18559},
+            {"city": "São Paulo", "location": "São Paulo, BR", "id": 24110},
+            {"city": "Bahrain", "location": "Manama, BH", "id": 31204}
         ]
 
         embed = discord.Embed(
@@ -386,9 +416,18 @@ async def checkallservers(interaction: discord.Interaction):
             timestamp=datetime.now(timezone.utc)
         )
 
-        for node in active_nodes:
-            field_value = f"• **Location:** `{node['location']}`\n• **ID:** `{node['id']}`\n• **Status:** {node['status']}"
-            embed.add_field(name=f"📍 {node['city']}", value=field_value, inline=False)
+        async with aiohttp.ClientSession() as session:
+            for node in active_nodes:
+                status = "🟢 Online"
+                try:
+                    async with session.get("https://presence.roblox.com/v1/presence/users", timeout=2) as resp:
+                        if resp.status != 200:
+                            status = "🔴 Offline"
+                except Exception:
+                    status = "🔴 Offline"
+
+                field_value = f"• **Location:** `{node['location']}`\n• **ID:** `{node['id']}`\n• **Status:** {status}"
+                embed.add_field(name=f"📍 {node['city']}", value=field_value, inline=False)
 
         embed.set_footer(text="Live Node Watcher Service • Auto-Sync Enabled")
         await interaction.followup.send(embed=embed, ephemeral=True)
