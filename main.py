@@ -254,15 +254,15 @@ class RobloxBot(discord.Client):
 
     async def setup_hook(self) -> None:
         try:
+            # Safely sync to test guild if specified, otherwise sync globally
             if DISCORD_GUILD_ID:
                 guild = discord.Object(id=int(DISCORD_GUILD_ID))
-                self.tree.clear_commands(guild=guild)
+                self.tree.copy_global_to(guild=guild)
                 synced = await self.tree.sync(guild=guild)
-                msg = f"Synced {len(synced)} slash commands to guild {DISCORD_GUILD_ID}."
+                msg = f"Successfully synced {len(synced)} commands to test server."
             else:
-                self.tree.clear_commands(guild=None)
                 synced = await self.tree.sync()
-                msg = f"Synced {len(synced)} global slash commands."
+                msg = f"Successfully synced {len(synced)} global slash commands."
             print(msg)
             asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"⚙️ {msg}"))
         except Exception as e:
