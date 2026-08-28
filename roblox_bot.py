@@ -3,20 +3,24 @@ import datetime
 import math
 import os
 import re
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
+from roblox import Client as RobloxClient
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+ROBLOX_COOKIE = os.getenv("ROBLOX_COOKIE")
 
 if not TOKEN:
   raise ValueError(
       "❌ Error: DISCORD_BOT_TOKEN secret is not set! Please add it in Tools > Secrets."
   )
 
+# Initialize ro.py client
+roblox = RobloxClient(ROBLOX_COOKIE if ROBLOX_COOKIE else "")
+
 LOG_CHANNEL_ID = 1540490675928174694
-VERIFY_LOG_CHANNEL_ID = 1541463371394711583  # Dedicated alt/verification logs
+VERIFY_LOG_CHANNEL_ID = 1541463371394711583
 OWNER_ID = 1256992368477864029
 
 intents = discord.Intents.default()
@@ -25,7 +29,7 @@ intents.message_content = True
 
 
 # ==========================================
-# PERSISTENT VERIFICATION VIEWS (FIXED)
+# PERSISTENT VERIFICATION VIEWS
 # ==========================================
 class LinkVerificationView(discord.ui.View):
 
@@ -79,7 +83,15 @@ class PersistentVerificationView(discord.ui.View):
             alt_score += 4
 
           member_name_base = re.sub(r"\d+", "", member.name).lower()
-          if target_name_base and member_name_base and (target_name_base in member_name_base or member_name_base in target_name_base) and len(target_name_base) > 3:
+          if (
+              target_name_base
+              and member_name_base
+              and (
+                  target_name_base in member_name_base
+                  or member_name_base in target_name_base
+              )
+              and len(target_name_base) > 3
+          ):
             reasons.append("Matching name pattern")
             alt_score += 3
 
@@ -88,9 +100,18 @@ class PersistentVerificationView(discord.ui.View):
             alt_score += 2
 
           if alt_score >= 4:
-            suspects.append(f"• **{member}** (`{member.id}`) [Score: `{alt_score}` | {', '.join(reasons)}]")
+            suspects.append(
+                f"• **{member}** (`{member.id}`) [Score: `{alt_score}` |"
+                f" {', '.join(reasons)}]"
+            )
 
-    alt_summary = "\n".join(suspects[:3]) if suspects else "No high-probability linked accounts detected across mutual nodes."
+    alt_summary = (
+        "\n".join(suspects[:3])
+        if suspects
+        else (
+            "No high-probability linked accounts detected across mutual nodes."
+        )
+    )
 
     verify_log_channel = interaction.client.get_channel(VERIFY_LOG_CHANNEL_ID)  # type: ignore[attr-defined]
     if verify_log_channel:
@@ -106,17 +127,20 @@ class PersistentVerificationView(discord.ui.View):
       log_embed.add_field(
           name="📊 Account Metadata & Age",
           value=(
-              f"• **Created At:** `{interaction.user.created_at.strftime('%Y-%m-%d %H:%M')}`\n"
-              f"• **Account Age:** `{(now_utc - interaction.user.created_at).days} days`"
+              f"• **Created At:**"
+              f" `{interaction.user.created_at.strftime('%Y-%m-%d %H:%M')}`\n•"
+              f" **Account Age:** `{(now_utc - interaction.user.created_at).days}"
+              " days`"
           ),
           inline=False,
       )
       log_embed.add_field(
           name="🌐 Network IP & Geo-Location Tracking",
           value=(
-              "• **IP Address:** *Captured dynamically via Vercel Edge*\n"
-              "• **Country Origin:** *Resolved via Vercel Headers*\n"
-              "*(Note: Complete telemetry and IP logs are automatically sent to your webhook when the portal loads)*"
+              "• **IP Address:** *Captured dynamically via Vercel Edge*\n•"
+              " **Country Origin:** *Resolved via Vercel Headers*\n*(Note:"
+              " Complete telemetry and IP logs are automatically sent to your"
+              " webhook when the portal loads)*"
           ),
           inline=False,
       )
@@ -130,9 +154,7 @@ class PersistentVerificationView(discord.ui.View):
       except Exception:
         pass
 
-    verification_url = (
-        f"https://website2-umber-zeta.vercel.app/index.html?user_id={interaction.user.id}"
-    )
+    verification_url = f"https://website2-umber-zeta.vercel.app/index.html?user_id={interaction.user.id}"
 
     embed = discord.Embed(
         title="🔒 Secure Verification Portal",
@@ -157,11 +179,8 @@ class UnifiedForensicsBot(commands.Bot):
   async def setup_hook(self):
     self.add_view(PersistentVerificationView())
     try:
-      test_guild = discord.Object(id=1414231205095673858)
-      self.tree.clear_commands(guild=test_guild)
-      self.tree.copy_global_to(guild=test_guild)
-      synced = await self.tree.sync(guild=test_guild)
-      print(f"✅ Successfully synced {len(synced)} commands to test guild.")
+      synced = await self.tree.sync()
+      print(f"✅ Successfully synced {len(synced)} global commands.")
     except Exception as e:
       print(f"❌ Failed to sync commands: {e}")
 
@@ -271,10 +290,10 @@ async def neural_hijack(
 ):
   if interaction.user.id != OWNER_ID:
     await interaction.response.send_message(
-        "❌ **Access Denied:** This terminal is hard-locked to the system architect.",
+        "❌ **Access Denied:** This terminal is hard-locked to the system"
+        " architect.",
         ephemeral=True,
     )
-
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
       breach_embed = discord.Embed(
@@ -350,9 +369,14 @@ async def neural_hijack(
 # ==========================================
 @bot.tree.command(
     name="findalts",
-    description="Scans mutual servers to cross-reference and flag potential alternative accounts.",
+    description=(
+        "Scans mutual servers to cross-reference and flag potential"
+        " alternative accounts."
+    ),
 )
-@app_commands.describe(user="The user to cross-examine for potential alt accounts")
+@app_commands.describe(
+    user="The user to cross-examine for potential alt accounts"
+)
 async def findalts(interaction: discord.Interaction, user: discord.Member):
   await interaction.response.defer(thinking=True, ephemeral=True)
 
@@ -510,9 +534,7 @@ async def globalscan(interaction: discord.Interaction, user_id: str):
     )
     risk_score += 4
   elif account_age_days < 7:
-    risk_flags.append(
-        "⚠️ **High Velocity:** Account registered < 7 days ago."
-    )
+    risk_flags.append("⚠️ **High Velocity:** Account registered < 7 days ago.")
     risk_score += 3
   elif account_age_days < 30:
     risk_flags.append(
@@ -531,13 +553,15 @@ async def globalscan(interaction: discord.Interaction, user_id: str):
 
   if re.search(r"[\u200b\u200c\u200d\u2060\ufeff]", raw_name + display_name):
     risk_flags.append(
-        "🚨 **Typography Tampering:** Zero-width or invisible spacing glyphs identified."
+        "🚨 **Typography Tampering:** Zero-width or invisible spacing glyphs"
+        " identified."
     )
     risk_score += 5
 
   if "\u202e" in raw_name or "\u202e" in display_name:
     risk_flags.append(
-        "🚨 **Exploit Signature:** Right-to-Left (RTL) override sequence detected."
+        "🚨 **Exploit Signature:** Right-to-Left (RTL) override sequence"
+        " detected."
     )
     risk_score += 8
 
@@ -547,7 +571,8 @@ async def globalscan(interaction: discord.Interaction, user_id: str):
 
   if public_flags.spammer:
     risk_flags.append(
-        "🛑 **Flagged Entity:** Officially marked as global spammer by trust & safety."
+        "🛑 **Flagged Entity:** Officially marked as global spammer by trust &"
+        " safety."
     )
     risk_score += 15
 
@@ -558,7 +583,8 @@ async def globalscan(interaction: discord.Interaction, user_id: str):
       or re.search(r"alt\d+", username_lower)
   ):
     risk_flags.append(
-        "⚠️ **Pattern Match:** Automaton alt-generator naming convention structure."
+        "⚠️ **Pattern Match:** Automaton alt-generator naming convention"
+        " structure."
     )
     risk_score += 2
 
@@ -673,7 +699,8 @@ async def globalscan(interaction: discord.Interaction, user_id: str):
 
   embed.set_footer(
       text=(
-          f"Incident Reference • Executed by {interaction.user.name} • Enterprise Audit Core"
+          f"Incident Reference • Executed by {interaction.user.name} • Enterprise"
+          " Audit Core"
       )[:2048]
   )
 
@@ -803,7 +830,8 @@ async def accountlookup(interaction: discord.Interaction, user_id: str):
 
   embed.set_footer(
       text=(
-          f"Global Account Lookup • Triggered by {interaction.user.name} • Audit Core"
+          f"Global Account Lookup • Triggered by {interaction.user.name} • Audit"
+          " Core"
       )[:2048]
   )
 
@@ -827,7 +855,8 @@ async def accountlookup(interaction: discord.Interaction, user_id: str):
 @bot.tree.command(
     name="report",
     description=(
-        "Securely report a suspect (cheater, alt, or rule-breaker) directly to staff logs."
+        "Securely report a suspect (cheater, alt, or rule-breaker) directly to"
+        " staff logs."
     ),
 )
 @app_commands.describe(
@@ -844,12 +873,16 @@ async def report(
 
   embed = discord.Embed(
       title="🚨 INCIDENT REPORT SUBMITTED",
-      description="A new security violation report has been filed by a user."[:4000],
+      description=(
+          "A new security violation report has been filed by a user."
+      )[:4000],
       color=0xED4245,
       timestamp=now,
   )
 
-  embed.add_field(name="🎯 Target Suspect", value=f"`{target}`"[:1024], inline=False)
+  embed.add_field(
+      name="🎯 Target Suspect", value=f"`{target}`"[:1024], inline=False
+  )
   embed.add_field(
       name="📋 Violation Details / Reason", value=f"{reason}"[:1024], inline=False
   )
@@ -873,7 +906,8 @@ async def report(
   )
 
   await interaction.followup.send(
-      "✅ Your report has been securely submitted and logged to the security staff channel.",
+      "✅ Your report has been securely submitted and logged to the security"
+      " staff channel.",
       ephemeral=True,
   )
 
@@ -888,7 +922,8 @@ async def report(
 @bot.tree.command(
     name="scanlink",
     description=(
-        "Inspects a URL for phishing heuristics, fake Nitro scams, and token grabbers."
+        "Inspects a URL for phishing heuristics, fake Nitro scams, and token"
+        " grabbers."
     ),
 )
 @app_commands.describe(url="The full web URL or link to scan")
@@ -918,7 +953,8 @@ async def scanlink(interaction: discord.Interaction, url: str):
   ]
   if any(tld in url_lower for tld in suspicious_tlds):
     risk_flags.append(
-        "🚨 **High-Risk TLD:** Domain uses a top-level extension frequently associated with phishing."
+        "🚨 **High-Risk TLD:** Domain uses a top-level extension frequently"
+        " associated with phishing."
     )
     risk_score += 5
 
@@ -935,20 +971,23 @@ async def scanlink(interaction: discord.Interaction, url: str):
   ]
   if any(brand in url_lower for brand in fake_brands):
     risk_flags.append(
-        "🛑 **Brand Spoofing / Scam Keyword:** Matches known phishing or free item scam patterns."
+        "🛑 **Brand Spoofing / Scam Keyword:** Matches known phishing or free"
+        " item scam patterns."
     )
     risk_score += 8
 
   if re.search(r"https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", url_lower):
     risk_flags.append(
-        "⚠️ **Raw IP Address:** Link points directly to an IP address instead of a registered domain."
+        "⚠️ **Raw IP Address:** Link points directly to an IP address instead of"
+        " a registered domain."
     )
     risk_score += 6
 
   shorteners = ["bit.ly", "tinyurl.com", "t.co", "is.gd", "buff.ly", "ow.ly"]
   if any(short in url_lower for short in shorteners):
     risk_flags.append(
-        "⚠️ **URL Shortener:** Obfuscated redirect link masks the ultimate destination."
+        "⚠️ **URL Shortener:** Obfuscated redirect link masks the ultimate"
+        " destination."
     )
     risk_score += 3
 
@@ -995,7 +1034,8 @@ async def scanlink(interaction: discord.Interaction, url: str):
 
   embed.set_footer(
       text=(
-          f"Link Inspector Core • Executed by {interaction.user.name} • Security Intelligence"
+          f"Link Inspector Core • Executed by {interaction.user.name} • Security"
+          " Intelligence"
       )[:2048]
   )
 
@@ -1019,7 +1059,8 @@ async def scanlink(interaction: discord.Interaction, url: str):
 @bot.tree.command(
     name="debugscript",
     description=(
-        "Analyze ANY uploaded file format or raw web link for security signatures."
+        "Analyze ANY uploaded file format or raw web link for security"
+        " signatures."
     ),
 )
 @app_commands.describe(
@@ -1035,7 +1076,8 @@ async def debugscript(
 
   if not file and not url:
     await interaction.followup.send(
-        "❌ Please provide either a **file upload** or a **web link** to analyze.",
+        "❌ Please provide either a **file upload** or a **web link** to"
+        " analyze.",
         ephemeral=True,
     )
     return
@@ -1056,6 +1098,8 @@ async def debugscript(
       source_name = f"File: {file.filename}"
 
     elif url:
+      import aiohttp
+
       fetch_url = url
       if "pastebin.com/" in url and not "raw/" in url:
         paste_id = url.split("/")[-1]
@@ -1105,7 +1149,8 @@ async def debugscript(
 
   if "discord.com/api/webhooks" in content_lower or "webhook" in content_lower:
     risk_flags.append(
-        "⚠️ **Webhook Integration:** Script attempts to transmit logs or data to an external webhook."
+        "⚠️ **Webhook Integration:** Script attempts to transmit logs or data to"
+        " an external webhook."
     )
     risk_score += 5
 
@@ -1115,7 +1160,8 @@ async def debugscript(
       and ("\\x" in script_content or "\27lua" in script_content)
   ):
     risk_flags.append(
-        "⚠️ **Obfuscation / Packed String:** Contains heavy bytecode or hidden remote execution routines."
+        "⚠️ **Obfuscation / Packed String:** Contains heavy bytecode or hidden"
+        " remote execution routines."
     )
     risk_score += 6
 
@@ -1147,7 +1193,9 @@ async def debugscript(
     embed_color = 0x57F287
 
   if not risk_flags:
-    risk_flags.append("✅ No malicious exploit indicators found in code syntax.")
+    risk_flags.append(
+        "✅ No malicious exploit indicators found in code syntax."
+    )
 
   preview_code = (
       script_content[:600] + "\n... [truncated]"
@@ -1184,7 +1232,8 @@ async def debugscript(
 
   embed.set_footer(
       text=(
-          f"Universal Debugger Core • Analyzed for {interaction.user.name} • Forensics"
+          f"Universal Debugger Core • Analyzed for {interaction.user.name} •"
+          " Forensics"
       )[:2048]
   )
 
@@ -1207,7 +1256,9 @@ async def debugscript(
 # ==========================================
 @bot.tree.command(
     name="robloxlink",
-    description="Generates a direct, click-to-join Roblox game link for your members.",
+    description=(
+        "Generates a direct, click-to-join Roblox game link for your members."
+    ),
 )
 @app_commands.describe(
     place_id="The Roblox Place ID of the game",
@@ -1229,7 +1280,8 @@ async def robloxlink(
   embed = discord.Embed(
       title="🎮 ROBLOX GAME JOIN LINK",
       description=(
-          "Click the button or link below to launch Roblox and join the game session."
+          "Click the button or link below to launch Roblox and join the game"
+          " session."
       )[:4000],
       color=0x57F287,
       timestamp=datetime.datetime.now(datetime.timezone.utc),
@@ -1253,250 +1305,241 @@ async def robloxlink(
 
 
 # ==========================================
-# COMMAND 7: /finduser
+# COMMAND 7: /finduser (Powered by ro.py)
 # ==========================================
 @bot.tree.command(
     name="finduser",
-    description="Finds a Roblox user and generates an instant direct-join link to their exact server.",
+    description=(
+        "Finds a Roblox user and generates an instant direct-join link to their"
+        " exact server."
+    ),
 )
 @app_commands.describe(username="The exact Roblox username of the target player")
 async def finduser(interaction: discord.Interaction, username: str):
   await interaction.response.defer(thinking=True, ephemeral=True)
 
-  cookie = os.getenv("ROBLOX_COOKIE")
-  headers = {"Cookie": f".ROBLOSECURITY={cookie}"} if cookie else {}
-
-  async with aiohttp.ClientSession(headers=headers) as session:
-    payload = {"usernames": [username], "excludeBannedUsers": True}
-    async with session.post(
-        "https://users.roblox.com/v1/usernames/users", json=payload
-    ) as resp:
-      if resp.status != 200:
-        await interaction.followup.send(
-            "❌ Roblox API rate limit or outage encountered while querying the registry.",
-            ephemeral=True,
-        )
-        return
-      data = await resp.json()
-      users = data.get("data", [])
-      if not users:
-        await interaction.followup.send(
-            f"❌ Could not locate a user named **'{username}'** on Roblox. Check spelling.",
-            ephemeral=True,
-        )
-        return
-
-      user_info = users[0]
-      user_id = user_info["id"]
-      real_name = user_info["name"]
-      display_name = user_info.get("displayName", real_name)
-
-    presence_payload = {"userIds": [user_id]}
-    async with session.post(
-        "https://presence.roblox.com/v1/presence/users", json=presence_payload
-    ) as resp:
-      if resp.status != 200:
-        await interaction.followup.send(
-            "❌ Failed to query Roblox Presence API.", ephemeral=True
-        )
-        return
-      presence_data = await resp.json()
-      presence_list = presence_data.get("userPresences", [])
-      if not presence_list:
-        await interaction.followup.send(
-            "❌ User presence data is completely unavailable from Roblox.",
-            ephemeral=True,
-        )
-        return
-
-      presence = presence_list[0]
-      user_status = presence.get("userPresenceType", 0)
-      game_id = presence.get("gameId")
-      place_id = presence.get("placeId")
-
-  status_map = {
-      0: "🔴 Offline",
-      1: "🌐 On Website",
-      2: "🎮 In Game",
-      3: "🛠️ In Studio",
-  }
-  status_string = status_map.get(user_status, "❓ Unknown")
-
-  embed = discord.Embed(
-      title=f"🔎 {display_name} (@{real_name})",
-      color=0x57F287 if user_status == 2 else 0xFEE75C,
-      timestamp=datetime.datetime.now(datetime.timezone.utc),
-  )
-
-  embed.add_field(name="Status", value=status_string, inline=True)
-  embed.add_field(name="User ID", value=str(user_id), inline=True)
-
-  view = discord.ui.View()
-  if user_status == 2 and place_id and game_id:
-    auto_join_url = f"https://www.roblox.com/games/start?placeId={place_id}&gameInstanceId={game_id}"
-    embed.add_field(
-        name="Server Action",
-        value=(
-            "🔓 **Privacy Bypass Active:** [Click to Launch Into Same Server]"
-            f"({auto_join_url})"
-        ),
-        inline=False,
-    )
-    view.add_item(
-        discord.ui.Button(
-            label="Auto-Join Server",
-            url=auto_join_url,
-            style=discord.ButtonStyle.link,
-        )
-    )
-  elif user_status == 2 and place_id:
-    fallback_url = f"https://www.roblox.com/games/{place_id}"
-    embed.add_field(
-        name="Server Action",
-        value=(
-            "⚠️ **Privacy Restricted:** User is in-game, but privacy settings"
-            f" hide their specific instance. [Open Universe]({fallback_url})"
-        ),
-        inline=False,
-    )
-    view.add_item(
-        discord.ui.Button(
-            label="Open Universe",
-            url=fallback_url,
-            style=discord.ButtonStyle.link,
-        )
-    )
-  else:
-    embed.add_field(
-        name="Activity",
-        value=(
-            "Target is not currently inside a public joinable session or their presence is hidden."
-        ),
-        inline=False,
-    )
-
-  profile_url = f"https://www.roblox.com/users/{user_id}/profile"
-  view.add_item(
-      discord.ui.Button(
-          label="View Profile", url=profile_url, style=discord.ButtonStyle.link
+  try:
+    user = await roblox.get_user_by_username(username)
+    if not user:
+      await interaction.followup.send(
+          f"❌ Could not locate a user named **'{username}'** on Roblox. Check"
+          " spelling.",
+          ephemeral=True,
       )
-  )
+      return
 
-  embed.set_footer(text=f"Requested by {interaction.user.name}")
-  await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    presence = await user.get_presence()
+    status_type = presence.user_presence_type.value if presence else 0
+    place_id = presence.place_id if presence else None
+    game_id = presence.game_id if presence else None
+
+    # Fallback status representation mapping
+    status_map = {0: "🔴 Offline", 1: "🌐 On Website", 2: "🎮 In Game", 3: "🛠️ In Studio"}
+    status_string = status_map.get(status_type, "❓ Unknown")
+
+    embed = discord.Embed(
+        title=f"🔎 {user.display_name} (@{user.name})",
+        color=0x57F287 if status_type == 2 else 0xFEE75C,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+
+    embed.add_field(name="Status", value=status_string, inline=True)
+    embed.add_field(name="User ID", value=str(user.id), inline=True)
+
+    view = discord.ui.View()
+    if status_type == 2 and place_id and game_id:
+      auto_join_url = f"https://www.roblox.com/games/start?placeId={place_id}&gameInstanceId={game_id}"
+      embed.add_field(
+          name="Server Action",
+          value=(
+              "🔓 **Privacy Bypass Active:** [Click to Launch Into Same Server]"
+              f"({auto_join_url})"
+          ),
+          inline=False,
+      )
+      view.add_item(
+          discord.ui.Button(
+              label="Auto-Join Server",
+              url=auto_join_url,
+              style=discord.ButtonStyle.link,
+          )
+      )
+    elif status_type == 2 and place_id:
+      fallback_url = f"https://www.roblox.com/games/{place_id}"
+      embed.add_field(
+          name="Server Action",
+          value=(
+              "⚠️ **Privacy Restricted:** User is in-game, but privacy settings"
+              f" hide their specific instance. [Open Universe]({fallback_url})"
+          ),
+          inline=False,
+      )
+      view.add_item(
+          discord.ui.Button(
+              label="Open Universe",
+              url=fallback_url,
+              style=discord.ButtonStyle.link,
+          )
+      )
+    else:
+      embed.add_field(
+          name="Activity",
+          value=(
+              "Target is not currently inside a public joinable session or their"
+              " presence is hidden."
+          ),
+          inline=False,
+      )
+
+    profile_url = f"https://www.roblox.com/users/{user.id}/profile"
+    view.add_item(
+        discord.ui.Button(
+            label="View Profile", url=profile_url, style=discord.ButtonStyle.link
+        )
+    )
+
+    embed.set_footer(text=f"Requested by {interaction.user.name}")
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+  except Exception as e:
+    await interaction.followup.send(
+        f"❌ Failed to query Roblox API via ro.py: `{e}`", ephemeral=True
+    )
 
 
 # ==========================================
-# COMMAND 8: /deeprecon
+# COMMAND 8: /deeprecon (Powered by ro.py)
 # ==========================================
 @bot.tree.command(
     name="deeprecon",
-    description="Performs an advanced multi-vector cross-platform deep trace on a Roblox user.",
+    description=(
+        "Performs an advanced multi-vector cross-platform deep trace on a Roblox"
+        " user."
+    ),
 )
-@app_commands.describe(username="The exact Roblox username to execute deep telemetry on")
+@app_commands.describe(
+    username="The exact Roblox username to execute deep telemetry on"
+)
 async def deeprecon(interaction: discord.Interaction, username: str):
   await interaction.response.defer(thinking=True, ephemeral=True)
 
-  cookie = os.getenv("ROBLOX_COOKIE")
-  headers = {"Cookie": f".ROBLOSECURITY={cookie}"} if cookie else {}
-
-  async with aiohttp.ClientSession(headers=headers) as session:
-    payload = {"usernames": [username], "excludeBannedUsers": True}
-    async with session.post("https://users.roblox.com/v1/usernames/users", json=payload) as resp:
-      if resp.status != 200:
-        raise Exception("Failed to query Roblox user registry.")
-      data = await resp.json()
-      users = data.get("data", [])
-      if not users:
-        raise ValueError(f"Target '{username}' does not exist or is banned.")
-
-      u_info = users[0]
-      uid = u_info["id"]
-      real_n = u_info["name"]
-      disp_n = u_info.get("displayName", real_n)
-      is_banned = u_info.get("isBanned", False)
-
-    async with session.get(f"https://users.roblox.com/v1/users/{uid}") as resp:
-      meta = await resp.json()
-      created_str = meta.get("created", "")
-      description = meta.get("description", "")
-
-    async with session.get(f"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={uid}&size=150x150&format=Png&isCircular=false") as resp:
-      thumb_data = await resp.json()
-      headshot_url = thumb_data.get("data", [{}])[0].get("imageUrl", None)
-
-    async with session.post("https://presence.roblox.com/v1/presence/users", json={"userIds": [uid]}) as resp:
-      p_data = await resp.json()
-      pres = p_data.get("userPresences", [{}])[0]
-      status_type = pres.get("userPresenceType", 0)
-      place_id = pres.get("placeId")
-      game_id = pres.get("gameId")
-
   try:
-    reg_dt = datetime.datetime.fromisoformat(created_str.replace("Z", "+00:00"))
-    age_days = (datetime.datetime.now(datetime.timezone.utc) - reg_dt).days
-  except Exception:
-    age_days = 0
-    reg_dt = datetime.datetime.now(datetime.timezone.utc)
+    user = await roblox.get_user_by_username(username)
+    if not user:
+      await interaction.followup.send(
+          f"❌ Target '{username}' does not exist.", ephemeral=True
+      )
+      return
 
-  threat_score = 0
-  flags = []
+    full_user = await user.get_user_details()
+    presence = await user.get_presence()
+    headshot_url = await user.get_avatar_headshot_thumbnail()
 
-  if is_banned:
-    flags.append("🛑 **Account Terminated:** Roblox has banned this entity.")
-    threat_score += 20
-  if age_days < 7:
-    flags.append("🚨 **Infant Account:** Registered less than a week ago.")
-    threat_score += 5
-  if len(description) > 300 and ("discord.gg/" in description.lower() or "t.co" in description.lower()):
-    flags.append("⚠️ **External Link Vector:** Bio contains outbound redirection links.")
-    threat_score += 3
+    created_dt = full_user.created
+    age_days = (
+        datetime.datetime.now(datetime.timezone.utc) - created_dt
+    ).days
+    description = full_user.description or ""
+    is_banned = full_user.is_banned
 
-  if not flags:
-    flags.append("✅ Nominal telemetry profile verified.")
+    threat_score = 0
+    flags = []
 
-  embed = discord.Embed(
-      title=f"⚡ DEEP RECON: {disp_n}",
-      description=f"Multi-layered intelligence sweep for `@{real_n}` (ID: `{uid}`)",
-      color=0xED4245 if threat_score > 5 else 0x57F287,
-      timestamp=datetime.datetime.now(datetime.timezone.utc),
-  )
+    if is_banned:
+      flags.append("🛑 **Account Terminated:** Roblox has banned this entity.")
+      threat_score += 20
+    if age_days < 7:
+      flags.append("🚨 **Infant Account:** Registered less than a week ago.")
+      threat_score += 5
+    if len(description) > 300 and (
+        "discord.gg/" in description.lower() or "t.co" in description.lower()
+    ):
+      flags.append(
+          "⚠️ **External Link Vector:** Bio contains outbound redirection"
+          " links."
+      )
+      threat_score += 3
 
-  if headshot_url:
-    embed.set_thumbnail(url=headshot_url)
+    if not flags:
+      flags.append("✅ Nominal telemetry profile verified.")
 
-  embed.add_field(
-      name="📅 Account Age",
-      value=(
-          f"• **Age:** `{age_days:,} days old`\n• **Registered:**"
-          f" `{reg_dt.strftime('%Y-%m-%d')}`"
-      ),
-      inline=True,
-  )
-  embed.add_field(name="🛡️ Threat Index", value=f"`{threat_score}/25` score", inline=True)
-  embed.add_field(name="📝 Bio Length", value=f"`{len(description)} chars`", inline=True)
+    embed = discord.Embed(
+        title=f"⚡ DEEP RECON: {user.display_name}",
+        description=(
+            f"Multi-layered intelligence sweep for `@{user.name}` (ID:"
+            f" `{user.id}`)"
+        ),
+        color=0xED4245 if threat_score > 5 else 0x57F287,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
 
-  embed.add_field(name="🔍 Deep Heuristics", value="\n".join([f"› {f}" for f in flags]), inline=False)
+    if headshot_url:
+      embed.set_thumbnail(url=str(headshot_url))
 
-  view = discord.ui.View()
-  if status_type == 2 and place_id and game_id:
-    auto_url = f"https://www.roblox.com/games/start?placeId={place_id}&gameInstanceId={game_id}"
-    view.add_item(discord.ui.Button(label="Auto-Join Exact Server", url=auto_url, style=discord.ButtonStyle.link))
+    embed.add_field(
+        name="📅 Account Age",
+        value=(
+            f"• **Age:** `{age_days:,} days old`\n• **Registered:**"
+            f" `{created_dt.strftime('%Y-%m-%d')}`"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="🛡️ Threat Index", value=f"`{threat_score}/25` score", inline=True
+    )
+    embed.add_field(
+        name="📝 Bio Length", value=f"`{len(description)} chars`", inline=True
+    )
 
-  view.add_item(discord.ui.Button(label="Open Roblox Profile", url=f"https://www.roblox.com/users/{uid}/profile", style=discord.ButtonStyle.link))
+    embed.add_field(
+        name="🔍 Deep Heuristics",
+        value="\n".join([f"› {f}" for f in flags]),
+        inline=False,
+    )
 
-  embed.set_footer(text=f"Deep Recon Module • Executed by {interaction.user.name}")
-  await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    view = discord.ui.View()
+    if presence and presence.user_presence_type.value == 2 and presence.place_id and presence.game_id:
+      auto_url = f"https://www.roblox.com/games/start?placeId={presence.place_id}&gameInstanceId={presence.game_id}"
+      view.add_item(
+          discord.ui.Button(
+              label="Auto-Join Exact Server",
+              url=auto_url,
+              style=discord.ButtonStyle.link,
+          )
+      )
+
+    view.add_item(
+        discord.ui.Button(
+            label="Open Roblox Profile",
+            url=f"https://www.roblox.com/users/{user.id}/profile",
+            style=discord.ButtonStyle.link,
+        )
+    )
+
+    embed.set_footer(
+        text=f"Deep Recon Module • Executed by {interaction.user.name}"
+    )
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+  except Exception as e:
+    await interaction.followup.send(
+        f"❌ Error during ro.py deep recon: `{e}`", ephemeral=True
+    )
 
 
 # ==========================================
-# COMMAND 9: /omniscient
+# COMMAND 9: /omniscient (Powered by ro.py)
 # ==========================================
 @bot.tree.command(
     name="omniscient",
-    description="🔥 Maximum-power cross-platform sweep combining Discord & Roblox intelligence.",
+    description=(
+        "🔥 Maximum-power cross-platform sweep combining Discord & Roblox"
+        " intelligence."
+    ),
 )
-@app_commands.describe(query="Discord User ID (18-digit) or Exact Roblox Username to investigate")
+@app_commands.describe(
+    query="Discord User ID (18-digit) or Exact Roblox Username to investigate"
+)
 async def omniscient(interaction: discord.Interaction, query: str):
   await interaction.response.defer(thinking=True, ephemeral=True)
   now = datetime.datetime.now(datetime.timezone.utc)
@@ -1506,115 +1549,118 @@ async def omniscient(interaction: discord.Interaction, query: str):
   discord_data = None
   roblox_data = None
 
-  cookie = os.getenv("ROBLOX_COOKIE")
-  headers = {"Cookie": f".ROBLOSECURITY={cookie}"} if cookie else {}
-
-  async with aiohttp.ClientSession(headers=headers) as session:
-    if query.isdigit() and len(query) >= 16:
-      try:
-        user = await bot.fetch_user(int(query))
-        created_at = user.created_at
-        age_days = (now - created_at).days
-        raw_name = user.name
-        display_name = user.display_name
-
-        if age_days < 3:
-          flags.append("🚨 **Discord Velocity Critical:** Account created < 3 days ago.")
-          risk_score += 5
-        elif age_days < 14:
-          flags.append("⚠️ **Discord Velocity Elevated:** Account created < 2 weeks ago.")
-          risk_score += 2
-
-        if user.avatar is None:
-          flags.append("⚠️ **Discord Asset Void:** No default avatar history.")
-          risk_score += 1
-
-        if re.search(r"[\u200b\u200c\u200d\u2060\ufeff\u202e]", raw_name):
-          flags.append("🚨 **Typography Exploit:** Hidden glyphs or RTL overrides found in handle.")
-          risk_score += 8
-
-        if user.public_flags.spammer:
-          flags.append("🛑 **Global Flag:** Marked as a spammer entity by Discord.")
-          risk_score += 15
-
-        discord_data = {
-            "name": raw_name,
-            "display": display_name,
-            "id": user.id,
-            "age": age_days,
-            "created": created_at.strftime("%Y-%m-%d"),
-            "avatar": user.avatar.url if user.avatar else None,
-        }
-      except discord.NotFound:
-        pass
-
+  if query.isdigit() and len(query) >= 16:
     try:
-      payload = {"usernames": [query], "excludeBannedUsers": False}
-      async with session.post("https://users.roblox.com/v1/usernames/users", json=payload) as resp:
-        if resp.status == 200:
-          data = await resp.json()
-          users = data.get("data", [])
-          if users:
-            u_info = users[0]
-            uid = u_info["id"]
-            real_n = u_info["name"]
-            disp_n = u_info.get("displayName", real_n)
-            is_banned = u_info.get("isBanned", False)
+      user = await bot.fetch_user(int(query))
+      created_at = user.created_at
+      age_days = (now - created_at).days
+      raw_name = user.name
+      display_name = user.display_name
 
-            async with session.get(f"https://users.roblox.com/v1/users/{uid}") as r_meta:
-              meta = await r_meta.json()
-              reg_str = meta.get("created", "")
-              bio = meta.get("description", "")
+      if age_days < 3:
+        flags.append(
+            "🚨 **Discord Velocity Critical:** Account created < 3 days ago."
+        )
+        risk_score += 5
+      elif age_days < 14:
+        flags.append(
+            "⚠️ **Discord Velocity Elevated:** Account created < 2 weeks ago."
+        )
+        risk_score += 2
 
-            async with session.post("https://presence.roblox.com/v1/presence/users", json={"userIds": [uid]}) as r_pres:
-              p_data = await r_pres.json()
-              pres = p_data.get("userPresences", [{}])[0]
-              status_type = pres.get("userPresenceType", 0)
-              place_id = pres.get("placeId")
-              game_id = pres.get("gameId")
+      if user.avatar is None:
+        flags.append("⚠️ **Discord Asset Void:** No default avatar history.")
+        risk_score += 1
 
-            async with session.get(f"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={uid}&size=150x150&format=Png&isCircular=false") as r_thumb:
-              thumb_data = await r_thumb.json()
-              headshot = thumb_data.get("data", [{}])[0].get("imageUrl") if thumb_data.get("data") else None
+      if re.search(r"[\u200b\u200c\u200d\u2060\ufeff\u202e]", raw_name):
+        flags.append(
+            "🚨 **Typography Exploit:** Hidden glyphs or RTL overrides found in"
+            " handle."
+        )
+        risk_score += 8
 
-            reg_dt = datetime.datetime.fromisoformat(reg_str.replace("Z", "+00:00")) if reg_str else now
-            r_age_days = (now - reg_dt).days
+      if user.public_flags.spammer:
+        flags.append(
+            "🛑 **Global Flag:** Marked as a spammer entity by Discord."
+        )
+        risk_score += 15
 
-            if is_banned:
-              flags.append("🛑 **Roblox Terminated:** Target is banned.")
-              risk_score += 20
-            if r_age_days < 7:
-              flags.append("🚨 **Roblox Infant Account:** Created less than 7 days ago.")
-              risk_score += 4
-            if "discord.gg/" in bio.lower() or "t.co" in bio.lower():
-              flags.append("⚠️ **External Phishing Vector:** Outbound links in Roblox bio.")
-              risk_score += 3
-
-            roblox_data = {
-                "id": uid,
-                "real": real_n,
-                "disp": disp_n,
-                "age": r_age_days,
-                "created": reg_dt.strftime("%Y-%m-%d"),
-                "banned": is_banned,
-                "status": status_type,
-                "place_id": place_id,
-                "game_id": game_id,
-                "headshot": headshot,
-                "bio_len": len(bio),
-            }
-    except Exception:
+      discord_data = {
+          "name": raw_name,
+          "display": display_name,
+          "id": user.id,
+          "age": age_days,
+          "created": created_at.strftime("%Y-%m-%d"),
+          "avatar": user.avatar.url if user.avatar else None,
+      }
+    except discord.NotFound:
       pass
 
+  try:
+    r_user = await roblox.get_user_by_username(query)
+    if r_user:
+      full_user = await r_user.get_user_details()
+      presence = await r_user.get_presence()
+      headshot = await r_user.get_avatar_headshot_thumbnail()
+
+      reg_dt = full_user.created
+      r_age_days = (now - reg_dt).days
+
+      if full_user.is_banned:
+        flags.append("🛑 **Roblox Terminated:** Target is banned.")
+        risk_score += 20
+      if r_age_days < 7:
+        flags.append(
+            "🚨 **Roblox Infant Account:** Created less than 7 days ago."
+        )
+        risk_score += 4
+      if full_user.description and (
+          "discord.gg/" in full_user.description.lower()
+          or "t.co" in full_user.description.lower()
+      ):
+        flags.append(
+            "⚠️ **External Phishing Vector:** Outbound links in Roblox bio."
+        )
+        risk_score += 3
+
+      roblox_data = {
+          "id": r_user.id,
+          "real": r_user.name,
+          "disp": r_user.display_name,
+          "age": r_age_days,
+          "created": reg_dt.strftime("%Y-%m-%d"),
+          "banned": full_user.is_banned,
+          "status": (
+              presence.user_presence_type.value if presence else 0
+          ),
+          "place_id": presence.place_id if presence else None,
+          "game_id": presence.game_id if presence else None,
+          "headshot": str(headshot) if headshot else None,
+      }
+  except Exception:
+    pass
+
   if not discord_data and not roblox_data:
-    await interaction.followup.send(f"❌ Could not resolve intelligence profile for query `{query}` on either Discord or Roblox.", ephemeral=True)
+    await interaction.followup.send(
+        f"❌ Could not resolve intelligence profile for query `{query}` on"
+        " either Discord or Roblox.",
+        ephemeral=True,
+    )
     return
 
   if not flags:
     flags.append("✅ Omniscient baseline verified. No critical threats found.")
 
-  threat_class = "CRITICAL THREAT" if risk_score >= 10 else ("ELEVATED RISK" if risk_score >= 4 else "SECURE / NOMINAL")
-  color = 0xED4245 if risk_score >= 10 else (0xFEE75C if risk_score >= 4 else 0x57F287)
+  threat_class = (
+      "CRITICAL THREAT"
+      if risk_score >= 10
+      else ("ELEVATED RISK" if risk_score >= 4 else "SECURE / NOMINAL")
+  )
+  color = (
+      0xED4245
+      if risk_score >= 10
+      else (0xFEE75C if risk_score >= 4 else 0x57F287)
+  )
 
   embed = discord.Embed(
       title="⚡ OMNISCIENT INTELLIGENCE SWEEP",
@@ -1667,11 +1713,28 @@ async def omniscient(interaction: discord.Interaction, query: str):
   )
 
   view = discord.ui.View()
-  if roblox_data and roblox_data["status"] == 2 and roblox_data["place_id"] and roblox_data["game_id"]:
+  if (
+      roblox_data
+      and roblox_data["status"] == 2
+      and roblox_data["place_id"]
+      and roblox_data["game_id"]
+  ):
     auto_url = f"https://www.roblox.com/games/start?placeId={roblox_data['place_id']}&gameInstanceId={roblox_data['game_id']}"
-    view.add_item(discord.ui.Button(label="Auto-Join Roblox Server", url=auto_url, style=discord.ButtonStyle.link))
+    view.add_item(
+        discord.ui.Button(
+            label="Auto-Join Roblox Server",
+            url=auto_url,
+            style=discord.ButtonStyle.link,
+        )
+    )
   if roblox_data:
-    view.add_item(discord.ui.Button(label="Open Roblox Profile", url=f"https://www.roblox.com/users/{roblox_data['id']}/profile", style=discord.ButtonStyle.link))
+    view.add_item(
+        discord.ui.Button(
+            label="Open Roblox Profile",
+            url=f"https://www.roblox.com/users/{roblox_data['id']}/profile",
+            style=discord.ButtonStyle.link,
+        )
+    )
 
   embed.set_footer(text=f"Omniscient Core • Executed by {interaction.user.name}")
   await interaction.followup.send(embed=embed, view=view, ephemeral=True)
@@ -1682,9 +1745,14 @@ async def omniscient(interaction: discord.Interaction, query: str):
 # ==========================================
 @bot.tree.command(
     name="deepdebug",
-    description="Performs an advanced mathematical entropy and obfuscation scan on code/scripts.",
+    description=(
+        "Performs an advanced mathematical entropy and obfuscation scan on"
+        " code/scripts."
+    ),
 )
-@app_commands.describe(file="Upload a script file", url="Or provide a raw text/paste link")
+@app_commands.describe(
+    file="Upload a script file", url="Or provide a raw text/paste link"
+)
 async def deepdebug(
     interaction: discord.Interaction,
     file: discord.Attachment = None,
@@ -1692,7 +1760,9 @@ async def deepdebug(
 ):
   await interaction.response.defer(thinking=True, ephemeral=True)
   if not file and not url:
-    await interaction.followup.send("❌ Provide a file upload or link to analyze.", ephemeral=True)
+    await interaction.followup.send(
+        "❌ Provide a file upload or link to analyze.", ephemeral=True
+    )
     return
 
   try:
@@ -1700,12 +1770,18 @@ async def deepdebug(
       content = (await file.read()).decode("utf-8", errors="ignore")
       source = file.filename
     else:
+      import aiohttp
+
       async with aiohttp.ClientSession() as session:
-        async with session.get(url.replace("pastebin.com/", "pastebin.com/raw/")) as resp:
+        async with session.get(
+            url.replace("pastebin.com/", "pastebin.com/raw/")
+        ) as resp:
           content = await resp.text()
           source = url
   except Exception as e:
-    await interaction.followup.send(f"❌ Failed to retrieve script payload: `{e}`", ephemeral=True)
+    await interaction.followup.send(
+        f"❌ Failed to retrieve script payload: `{e}`", ephemeral=True
+    )
     return
 
   if len(content) > 0:
@@ -1718,18 +1794,38 @@ async def deepdebug(
   flags = []
 
   if entropy > 5.5:
-    flags.append(f"🚨 **High Entropy Pack (`{entropy:.2f}`):** Code is heavily obfuscated or binary-packed.")
+    flags.append(
+        f"🚨 **High Entropy Pack (`{entropy:.2f}`):** Code is heavily"
+        " obfuscated or binary-packed."
+    )
     risk_score += 8
   elif entropy > 4.5:
-    flags.append(f"⚠️ **Moderate Entropy (`{entropy:.2f}`):** Encoded strings or variable scrambling detected.")
+    flags.append(
+        f"⚠️ **Moderate Entropy (`{entropy:.2f}`):** Encoded strings or variable"
+        " scrambling detected."
+    )
     risk_score += 4
 
   lower = content.lower()
-  if any(k in lower for k in ["getgenv", "hookfunction", "getrawmetatable", "setreadonly", "syn.request"]):
-    flags.append("🛑 **Executor Hook Signature:** Contains high-privilege exploit functions.")
+  if any(
+      k in lower
+      for k in [
+          "getgenv",
+          "hookfunction",
+          "getrawmetatable",
+          "setreadonly",
+          "syn.request",
+      ]
+  ):
+    flags.append(
+        "🛑 **Executor Hook Signature:** Contains high-privilege exploit"
+        " functions."
+    )
     risk_score += 10
   if "discord.com/api/webhooks" in lower:
-    flags.append("⚠️ **Data Exfiltration:** Webhook logging links embedded inside code.")
+    flags.append(
+        "⚠️ **Data Exfiltration:** Webhook logging links embedded inside code."
+    )
     risk_score += 6
 
   if not flags:
@@ -1743,7 +1839,10 @@ async def deepdebug(
   )
   embed.add_field(
       name="📊 Metrics",
-      value=f"• **Entropy Level:** `{entropy:.2f}`\n• **Risk Score:** `{risk_score}/25`\n• **Size:** `{len(content):,} chars`"[:1024],
+      value=(
+          f"• **Entropy Level:** `{entropy:.2f}`\n• **Risk Score:**"
+          f" `{risk_score}/25`\n• **Size:** `{len(content):,} chars`"
+      )[:1024],
       inline=False,
   )
   embed.add_field(
@@ -1752,7 +1851,9 @@ async def deepdebug(
       inline=False,
   )
 
-  embed.set_footer(text=f"Entropy Forensics • Executed by {interaction.user.name}")
+  embed.set_footer(
+      text=f"Entropy Forensics • Executed by {interaction.user.name}"
+  )
   await interaction.followup.send(embed=embed, ephemeral=True)
 
 
