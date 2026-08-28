@@ -434,11 +434,18 @@ async def finduser(interaction: discord.Interaction, username: str):
         )
         embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
         
-        place_id = getattr(presence_data, "place_id", None) or (presence_data.get("placeId") if isinstance(presence_data, dict) else None)
-        job_id = getattr(presence_data, "job_id", None) or (presence_data.get("gameId") if isinstance(presence_data, dict) else None)
-        presence_type = getattr(presence_data, "user_presence_type", None) or (presence_data.get("userPresenceType") if isinstance(presence_data, dict) else None)
+        place_id = None
+        job_id = None
+        presence_type = 0
 
-        if place_id and presence_type == 2:
+        if presence_data:
+            place_id = getattr(presence_data, "place_id", None) or (presence_data.get("placeId") if isinstance(presence_data, dict) else None)
+            job_id = getattr(presence_data, "job_id", None) or (presence_data.get("gameId") if isinstance(presence_data, dict) else None)
+            presence_type = getattr(presence_data, "user_presence_type", None) or (presence_data.get("userPresenceType") if isinstance(presence_data, dict) else None)
+
+        print(f"[DEBUG] User {user_id} Presence Type: {presence_type} | Place ID: {place_id} | Job ID: {job_id}")
+
+        if place_id:
             public_link = f"https://www.roblox.com/games/{place_id}"
             embed.add_field(name="🌍 Public Game Link", value=f"[Join Public Universe]({public_link})", inline=False)
             
@@ -446,11 +453,15 @@ async def finduser(interaction: discord.Interaction, username: str):
                 private_link = f"https://www.roblox.com/games/{place_id}?privateServerLinkCode={job_id}"
                 embed.add_field(name="🔒 Server Instance / VIP Link", value=f"[Join Specific Server Instance]({private_link})", inline=False)
             else:
-                embed.add_field(name="🔒 Server Instance", value="User is active in a public session without an exposed job token.", inline=False)
+                embed.add_field(name="🔒 Server Instance", value="Active in a public session (No private job token exposed).", inline=False)
         else:
             profile_url = f"https://www.roblox.com/users/{user_id}/profile"
-            embed.add_field(name="🌐 Roblox Web Profile", value=f"[View Profile Page]({profile_url})", inline=False)
-            embed.description = f"Target **{info.get('name')}** is currently offline, in-studio, or has privacy settings restricting presence telemetry."
+            embed.add_field(name="🌐 Roblox Web Profile Link", value=f"[Open User Profile]({profile_url})", inline=False)
+            embed.description = (
+                f"Target **{info.get('name')}** has privacy settings enabled restricting live join data, "
+                "or is currently offline/in Roblox Studio.\n\n"
+                "💡 *Tip: Use `/robloxlink` with a specific Place ID if you need to force-generate an instance join URL.*"
+            )
 
         avatar = await ro.get_avatar(user_id)
         if avatar:
