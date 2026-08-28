@@ -6,7 +6,8 @@ import re
 from datetime import datetime, timezone
 import asyncio
 import threading
-import requests
+import json
+import urllib.request
 
 import discord
 from discord import app_commands
@@ -123,7 +124,13 @@ async def log_verification_event(user_id: str, ip_address: str, user_agent: str,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }]
         }
-        requests.post(WEBHOOK_URL, json=payload, timeout=5)
+        
+        req = urllib.request.Request(
+            WEBHOOK_URL,
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        urllib.request.urlopen(req, timeout=5)
     except Exception as e:
         print(f"Failed to process webhook verification log: {e}")
 
@@ -407,7 +414,7 @@ async def finduser(interaction: discord.Interaction, username: str):
     try:
         info = await ro.resolve(username)
         if not info:
-            await interaction.followup.save(f"❌ User **'{username}'** not found.", ephemeral=True)
+            await interaction.followup.send(f"❌ User **'{username}'** not found.", ephemeral=True)
             return
         embed = discord.Embed(title=f"🔎 {info.get('name')} (@{username})", color=0x57F287)
         embed.add_field(name="User ID", value=str(info['id']), inline=True)
