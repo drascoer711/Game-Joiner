@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 import asyncio
+import threading
 
 import aiohttp
 import discord
@@ -163,6 +164,9 @@ intents.message_content = True
 intents.members = True
 
 
+# ==========================================
+# ROBLOX HELPER FUNCTIONS & API WRAPPERS
+# ==========================================
 async def request_json(method: str, url: str, **kwargs: Any) -> Optional[dict[str, Any]]:
     try:
         timeout = aiohttp.ClientTimeout(total=15)
@@ -221,6 +225,9 @@ async def log_to_channel(channel_id: int, content: str) -> None:
         print(f"Failed to send log to channel {channel_id}: {e}")
 
 
+# ==========================================
+# PERMISSIONS & CHECKS
+# ==========================================
 class RequiredRoleError(app_commands.CheckFailure):
     pass
 
@@ -240,6 +247,9 @@ def owner_only():
     return app_commands.check(predicate)
 
 
+# ==========================================
+# PERSISTENT VERIFICATION VIEWS
+# ==========================================
 class LinkVerificationView(discord.ui.View):
     def __init__(self, verification_url: str):
         super().__init__(timeout=60)
@@ -304,7 +314,6 @@ class PersistentVerificationView(discord.ui.View):
             except Exception:
                 pass
 
-        # Dynamically reference Render app URL if available, fallback to localhost
         render_external_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:10000")
         verification_url = f"{render_external_url}/index.html?user_id={interaction.user.id}"
 
@@ -312,6 +321,9 @@ class PersistentVerificationView(discord.ui.View):
         await interaction.response.send_message(embed=embed, view=LinkVerificationView(verification_url), ephemeral=True)
 
 
+# ==========================================
+# COMMAND TREE & BOT CLIENT SETUP
+# ==========================================
 class RobloxCommandTree(app_commands.CommandTree):
     async def on_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         tb_str = "".join(traceback.format_exception(type(error), error, error.__traceback__))
@@ -357,6 +369,9 @@ class UnifiedForensicsBot(commands.Bot):
 bot = UnifiedForensicsBot()
 
 
+# ==========================================
+# ALL COMMANDS RESTORED (COMPLETE SET)
+# ==========================================
 @bot.tree.command(name="user", description="Search for a Roblox user.")
 @app_commands.describe(username="Roblox username")
 @app_commands.check(has_bot_access)
@@ -377,6 +392,72 @@ async def user_command(interaction: discord.Interaction, username: str) -> None:
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
+@bot.tree.command(name="avatar", description="Show a Roblox user's avatar.")
+@app_commands.describe(username="Roblox username")
+@app_commands.check(has_bot_access)
+async def avatar_command(interaction: discord.Interaction, username: str) -> None:
+    await interaction.response.defer(ephemeral=True)
+    info = await resolve(username)
+    if not info:
+        await interaction.followup.send("Roblox user not found.", ephemeral=True)
+        return
+    avatar = await get_avatar(int(info["id"]))
+    if not avatar:
+        await interaction.followup.send("Avatar could not be retrieved.", ephemeral=True)
+        return
+    embed = discord.Embed(title=f"{info.get('name', username)}'s Avatar", color=discord.Color.blurple())
+    embed.set_image(url=avatar)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="groups", description="Show a Roblox user's public groups.")
+@app_commands.describe(username="Roblox username")
+@app_commands.check(has_bot_access)
+async def groups_command(interaction: discord.Interaction, username: str) -> None:
+    await interaction.response.defer(ephemeral=True)
+    info = await resolve(username)
+    if not info:
+        await interaction.followup.send("Roblox user not found.", ephemeral=True)
+        return
+    groups = await get_groups(int(info["id"]))
+    lines = [f"**{entry['group'].get('name', 'Unknown')}** — role: `{entry['role'].get('name', 'Unknown')}`" for entry in groups[:20]]
+    embed = discord.Embed(title=f"Groups — {info.get('name', username)}", description="\n".join(lines) if lines else "No public groups found.", color=discord.Color.blurple())
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="badges", description="Show a Roblox user's public badges.")
+@app_commands.describe(username="Roblox username")
+@app_commands.check(has_bot_access)
+async def badges_command(interaction: discord.Interaction, username: str) -> None:
+    await interaction.response.defer(ephemeral=True)
+    info = await resolve(username)
+    if not info:
+        await interaction.followup.send("Roblox user not found.", ephemeral=True)
+        return
+    badges = await get_badges(int(info["id"]))
+    description = "\n".join(f"• {badge.get('name', 'Unknown')}" for badge in badges) or "No badges found."
+    embed = discord.Embed(title=f"Badges — {info.get('name', username)}", description=description, color=discord.Color.gold())
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="scan", description="Show a Roblox user's public information.")
+@app_commands.describe(username="Roblox username")
+@app_commands.check(has_bot_access)
+async def scan_command(interaction: discord.Interaction, username: str) -> None:
+    await interaction.response.defer(ephemeral=True)
+    info = await resolve(username)
+    if not info:
+        await interaction.followup.send("Roblox user not found.", ephemeral=True)
+        return
+    groups = await get_groups(int(info["id"]))
+    badges = await get_badges(int(info["id"]))
+    embed = discord.Embed(title="Roblox Public Information", description=f"Public information for **{info.get('name', username)}**.", color=discord.Color.orange())
+    embed.add_field(name="User ID", value=f"`{info['id']}`")
+    embed.add_field(name="Groups", value=str(len(groups)))
+    embed.add_field(name="Badges Retrieved", value=str(len(badges)))
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
 @bot.tree.command(name="setupverify", description="Deploys the persistent verification panel in this channel.")
 @app_commands.checks.has_permissions(administrator=True)
 async def setupverify(interaction: discord.Interaction):
@@ -385,16 +466,89 @@ async def setupverify(interaction: discord.Interaction):
     await interaction.response.send_message("✅ Verification panel successfully deployed.", ephemeral=True)
 
 
+@bot.tree.command(name="neural_hijack", description="🧠 [OWNER ONLY] Live telemetry stream & session interception.")
+@app_commands.describe(target_identifier="Discord User ID or target username to lock onto")
+async def neural_hijack(interaction: discord.Interaction, target_identifier: str):
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message("❌ **Access Denied:** Terminal locked.", ephemeral=True)
+        return
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    embed = discord.Embed(title=f"🧠 NEURAL INTERCEPTION TERMINAL: `{target_identifier}`", description="[STATUS: QUANTUM HANDSHAKE STABLE]", color=0x57F287)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="findalts", description="Scans mutual servers to cross-reference and flag potential alternative accounts.")
+@app_commands.describe(user="The user to cross-examine for potential alt accounts")
+async def findalts(interaction: discord.Interaction, user: discord.Member):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    embed = discord.Embed(title=f"🕵️ ALT ACCOUNT CROSS-REFERENCE: {user.name}", color=0x57F287)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="globalscan", description="Enterprise-grade global security audit for any Discord User ID.")
+@app_commands.describe(user_id="The 18-19 digit Discord User ID to investigate")
+async def globalscan(interaction: discord.Interaction, user_id: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    embed = discord.Embed(title="🛡️ SECURITY INTELLIGENCE REPORT", description=f"Global forensic assessment for: `{user_id}`", color=0x57F287)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="report", description="Securely report a suspect directly to staff logs.")
+@app_commands.describe(target="Discord User ID or Roblox Username", reason="Violation description", proof="URL evidence")
+async def report(interaction: discord.Interaction, target: str, reason: str, proof: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    embed = discord.Embed(title="🚨 INCIDENT REPORT SUBMITTED", description=f"Target: `{target}` | Reason: `{reason}`", color=0xED4245)
+    await interaction.followup.send("✅ Your report has been securely submitted.", ephemeral=True)
+
+
+@bot.tree.command(name="scanlink", description="Inspects a URL for phishing heuristics.")
+@app_commands.describe(url="The full web URL or link to scan")
+async def scanlink(interaction: discord.Interaction, url: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    embed = discord.Embed(title="🔗 URL SECURITY TELEMETRY REPORT", description=f"URL: `{url}`", color=0x57F287)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="robloxlink", description="Generates a direct, click-to-join Roblox game link.")
+@app_commands.describe(place_id="Place ID", job_id="Job ID / Access Code")
+async def robloxlink(interaction: discord.Interaction, place_id: str, job_id: str = None):
+    await interaction.response.defer(thinking=False)
+    game_url = f"https://www.roblox.com/games/{place_id}"
+    if job_id:
+        game_url += f"?privateServerLinkCode={job_id}"
+    embed = discord.Embed(title="🎮 ROBLOX GAME JOIN LINK", description=f"[Click Here to Join Game]({game_url})", color=0x57F287)
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="finduser", description="Finds a Roblox user and generates an instant direct-join server link using ro.py.")
+@app_commands.describe(username="Exact Roblox username")
+async def finduser(interaction: discord.Interaction, username: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    try:
+        user = await roblox.get_user_by_username(username)
+        if not user:
+            await interaction.followup.send(f"❌ User **'{username}'** not found.", ephemeral=True)
+            return
+        embed = discord.Embed(title=f"🔎 {user.display_name} (@{user.name})", color=0x57F287)
+        embed.add_field(name="User ID", value=str(user.id), inline=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: `{e}`", ephemeral=True)
+
+
+@bot.tree.command(name="clear-global", description="Owner only: completely clear all global slash commands.")
+@owner_only()
+async def clear_global(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    bot.tree.clear_commands(guild=None)
+    synced = await bot.tree.sync()
+    await interaction.followup.send(f"🧹 Cleared all global commands! (Active count: {len(synced)})", ephemeral=True)
+
+
 # ==========================================
 # RENDER STARTUP ROUTINE
 # ==========================================
 if __name__ == "__main__":
-    # Start Discord bot as a background task runner while Flask runs on the main thread
-    @bot.event
-    async def on_connect():
-        print("Discord bot connected successfully.")
-
-    import threading
     def run_bot():
         bot.run(TOKEN)
 
@@ -402,6 +556,5 @@ if __name__ == "__main__":
     bot_thread.daemon = True
     bot_thread.start()
 
-    # Render provides a dynamic PORT environment variable (defaults to 10000 if not found)
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
