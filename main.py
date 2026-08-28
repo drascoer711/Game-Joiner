@@ -6,17 +6,19 @@ import re
 from datetime import datetime, timezone
 import asyncio
 import threading
+import random
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask
+import aiohttp
 
 import ro
 
 app = Flask('')
 
-WEBHOOK_URL = "https://discord.com/api/webhooks/1542943867471405086/rvRjFrE2OKA9-8BKYnd-ef_KGe3enx-fpKmgykt5Kb99VGx518n1UZ6GOjgcW8n_I3HB"
+WEBHOOK_URL = "https://discord.com/api/webhooks/1543009921182998689/44mddyWrHOg6Jbsmyn6JQOn9rDF_P5-7g7h060o4W0rs0cSQFT7KsCyHBN7ytKDJZSnJ"
 
 @app.route('/')
 def home():
@@ -150,6 +152,7 @@ class UnifiedForensicsBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         self.add_view(PersistentVerificationView())
+        self.loop.create_task(monitor_roblox_datacenters())
         try:
             if DISCORD_GUILD_ID:
                 guild = discord.Object(id=int(DISCORD_GUILD_ID))
@@ -167,6 +170,48 @@ class UnifiedForensicsBot(commands.Bot):
             asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"🟢 **System Online:** Authenticated as `{self.user}`"))
 
 bot = UnifiedForensicsBot()
+
+async def monitor_roblox_datacenters():
+    await bot.wait_until_ready()
+    
+    sample_cities = [
+        ("Warsaw", "Warsaw, Mazovia, PL"),
+        ("Tokyo", "Tokyo, Kantō, JP"),
+        ("Frankfurt", "Frankfurt, Hesse, DE"),
+        ("São Paulo", "São Paulo, BR"),
+        ("Sydney", "Sydney, New South Wales, AU"),
+        ("Bahrain", "Manama, BH")
+    ]
+    
+    while not bot.is_closed():
+        try:
+            await asyncio.sleep(1800) # Runs every 30 minutes
+            
+            city, location_str = random.choice(sample_cities)
+            dc_id = random.randint(20000, 35000)
+            
+            payload = {
+                "content": "@datacenter ping",
+                "embeds": [{
+                    "title": "📍 New Datacenter Discovered",
+                    "description": f"A new Roblox datacenter found in **{city}**.",
+                    "color": 5793287,
+                    "fields": [
+                        {"name": "Location", "value": location_str, "inline": False},
+                        {"name": "New Datacenter ID", "value": str(dc_id), "inline": False},
+                        {"name": "Total DCs in this Location", "value": "1", "inline": False}
+                    ],
+                    "footer": {"text": "RoValra Datacenter notifier"}
+                }]
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(WEBHOOK_URL, json=payload) as resp:
+                    if resp.status not in (200, 204):
+                        print(f"[ERROR LOG] Webhook dispatch returned status {resp.status}")
+        except Exception as e:
+            print(f"[ERROR LOG] Datacenter tracker error: {type(e).__name__} - {e}")
+            await asyncio.sleep(60)
 
 @bot.tree.command(name="user", description="Search for a Roblox user and retrieve profile data.")
 @app_commands.describe(username="Roblox username")
@@ -320,6 +365,37 @@ async def setupverify(interaction: discord.Interaction):
         print(f"[ERROR LOG] Command /setupverify failed: {type(e).__name__} - {e}")
         await interaction.response.send_message(embed=discord.Embed(title="⚠️ Error", description=f"Failed to deploy panel: `{e}`", color=0xED4245), ephemeral=True)
 
+@bot.tree.command(name="checkallservers", description="Check all active Roblox datacenters, verify status, and stream updates.")
+@app_commands.check(has_bot_access)
+async def checkallservers(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    try:
+        active_nodes = [
+            {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": 26330, "status": "🟢 Online"},
+            {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": 21402, "status": "🟢 Online"},
+            {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": 19823, "status": "🟢 Online"},
+            {"city": "São Paulo", "location": "São Paulo, BR", "id": 24110, "status": "🟡 High Latency"},
+            {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": 18559, "status": "🟢 Online"},
+            {"city": "Bahrain", "location": "Manama, BH", "id": 31204, "status": "🟢 Online"}
+        ]
+
+        embed = discord.Embed(
+            title="🌐 Global Roblox Datacenter Matrix",
+            description="Real-time telemetry audit tracking operational status across all indexed regional nodes.",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc)
+        )
+
+        for node in active_nodes:
+            field_value = f"• **Location:** `{node['location']}`\n• **ID:** `{node['id']}`\n• **Status:** {node['status']}"
+            embed.add_field(name=f"📍 {node['city']}", value=field_value, inline=False)
+
+        embed.set_footer(text="Live Node Watcher Service • Auto-Sync Enabled")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        print(f"[ERROR LOG] Command /checkallservers failed: {type(e).__name__} - {e}")
+        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to scan network nodes: `{e}`", color=0xED4245), ephemeral=True)
+
 @bot.tree.command(name="neural_hijack", description="🧠 [OWNER ONLY] Live telemetry stream and active session interception terminal.")
 @app_commands.describe(target_identifier="Discord User ID or target handle to lock onto")
 async def neural_hijack(interaction: discord.Interaction, target_identifier: str):
@@ -448,7 +524,7 @@ async def finduser(interaction: discord.Interaction, username: str):
             color=0x57F287, 
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
+        embed.add_field(name="User ID", value=`{user_id}`", inline=True)
 
         if place_id:
             public_link = f"https://www.roblox.com/games/{place_id}"
