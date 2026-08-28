@@ -401,64 +401,58 @@ async def robloxlink(interaction: discord.Interaction, place_id: str, job_id: st
 async def finduser(interaction: discord.Interaction, username: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
+        print(f"[DEBUG] Starting finduser execution for: {username}")
         info = await ro.resolve(username)
         if not info:
-            embed = discord.Embed(
-                title="❌ Resolution Failed", 
-                description=f"Could not locate Roblox user matching **`{username}`**.", 
-                color=0xED4245
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=discord.Embed(title="❌ Resolution Failed", description=f"Could not locate Roblox user matching **`{username}`**.", color=0xED4245), ephemeral=True)
             return
         
         user_id = int(info["id"])
-        
+        print(f"[DEBUG] Resolved user {username} to ID {user_id}. Fetching presence...")
+
         presence_obj = None
         try:
-            if hasattr(ro, 'get_user_presences'):
+            user_obj = await ro.get_user(user_id) if hasattr(ro, 'get_user') else None
+            if user_obj and hasattr(user_obj, 'get_presence'):
+                presence_obj = await user_obj.get_presence()
+            elif hasattr(ro, 'get_user_presences'):
                 presences = await ro.get_user_presences([user_id])
                 if presences:
                     presence_obj = presences[0]
             elif hasattr(ro, 'get_presence'):
                 presence_obj = await ro.get_presence(user_id)
         except Exception as p_err:
-            print(f"[ERROR LOG] Presence lookup warning for user {user_id}: {type(p_err).__name__} - {p_err}")
-        
+            print(f"[ERROR LOG] Presence lookup sub-error: {type(p_err).__name__} - {p_err}")
+
+        place_id = None
+        job_id = None
+
+        if presence_obj:
+            place_attr = getattr(presence_obj, "place", None)
+            if place_attr:
+                place_id = getattr(place_attr, "id", None) or getattr(place_attr, "place_id", None)
+            
+            job_attr = getattr(presence_obj, "job", None)
+            if job_attr:
+                job_id = getattr(job_attr, "id", None) or getattr(job_attr, "job_id", None)
+            
+            if not place_id and isinstance(presence_obj, dict):
+                place_id = presence_obj.get("placeId") or presence_obj.get("place_id")
+            if not job_id and isinstance(presence_obj, dict):
+                job_id = presence_obj.get("gameId") or presence_obj.get("job_id")
+
+        print(f"[DEBUG] Final extracted -> Place ID: {place_id} | Job ID: {job_id}")
+
         embed = discord.Embed(
             title=f"🔎 Telemetry Tracker: {info.get('name')} (@{username})", 
             color=0x57F287, 
             timestamp=datetime.now(timezone.utc)
         )
         embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
-        
-        place_id = None
-        job_id = None
-        presence_type = None
-
-        if presence_obj:
-            presence_type = getattr(presence_obj, "user_presence_type", None)
-            
-            # ro.py uses sub-objects (.place and .job) on Presence objects
-            place_attr = getattr(presence_obj, "place", None)
-            if place_attr:
-                place_id = getattr(place_attr, "id", None) or getattr(place_attr, "place_id", None)
-                
-            job_attr = getattr(presence_obj, "job", None)
-            if job_attr:
-                job_id = getattr(job_attr, "id", None) or getattr(job_attr, "job_id", None)
-                
-            # Fallback check if it dictionary-mapped unexpectedly
-            if not place_id and isinstance(presence_obj, dict):
-                place_id = presence_obj.get("placeId")
-            if not job_id and isinstance(presence_obj, dict):
-                job_id = presence_obj.get("gameId")
-
-        print(f"[DEBUG] User {user_id} Presence Type: {presence_type} | Place ID: {place_id} | Job ID: {job_id}")
 
         if place_id:
             public_link = f"https://www.roblox.com/games/{place_id}"
             embed.add_field(name="🌍 Public Game Link", value=f"[Join Public Universe]({public_link})", inline=False)
-            
             if job_id:
                 private_link = f"https://www.roblox.com/games/{place_id}?privateServerLinkCode={job_id}"
                 embed.add_field(name="🔒 Server Instance / VIP Link", value=f"[Join Specific Server Instance]({private_link})", inline=False)
@@ -467,31 +461,18 @@ async def finduser(interaction: discord.Interaction, username: str):
         else:
             profile_url = f"https://www.roblox.com/users/{user_id}/profile"
             embed.add_field(name="🌐 Roblox Web Profile Link", value=f"[Open User Profile]({profile_url})", inline=False)
-            embed.description = (
-                f"Target **{info.get('name')}** has privacy settings enabled restricting live join data, "
-                "or is currently offline/in Roblox Studio.\n\n"
-                "💡 *Tip: Use `/robloxlink` with a specific Place ID if you need to force-generate an instance join URL.*"
-            )
+            embed.description = "Target is offline, in Roblox Studio, or has game join telemetry hidden by privacy settings."
 
         avatar = await ro.get_avatar(user_id)
         if avatar:
             embed.set_thumbnail(url=avatar)
-            
-        embed.set_footer(text="Roblox Realtime Telemetry Scanner")
+
         await interaction.followup.send(embed=embed, ephemeral=True)
-        
+
     except Exception as e:
         error_trace = traceback.format_exc()
-        print(f"[ERROR LOG] Command /finduser critical failure:\n{error_trace}")
-        
-        err_embed = discord.Embed(
-            title="⚠️ System Error Log",
-            description=f"An exception occurred during execution:\n```py\n{type(e).__name__}: {e}\n```",
-            color=0xED4245,
-            timestamp=datetime.now(timezone.utc)
-        )
-        err_embed.set_footer(text="Check console output for full traceback logs.")
-        await interaction.followup.send(embed=err_embed, ephemeral=True)
+        print(f"[CRITICAL ERROR] /finduser crashed:\n{error_trace}")
+        await interaction.followup.send(embed=discord.Embed(title="⚠️ Critical Error", description=f"```py\n{type(e).__name__}: {e}\n```", color=0xED4245), ephemeral=True)
 
 @bot.tree.command(name="clear-global", description="Owner only: completely clear all global application command trees and re-sync.")
 @owner_only()
