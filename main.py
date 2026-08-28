@@ -524,7 +524,7 @@ async def finduser(interaction: discord.Interaction, username: str):
             color=0x57F287, 
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="User ID", value=`{user_id}`", inline=True)
+        embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
 
         if place_id:
             public_link = f"https://www.roblox.com/games/{place_id}"
