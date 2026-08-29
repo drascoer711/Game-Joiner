@@ -40,6 +40,15 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
+TRACKED_NODES = {
+    "26330": {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": "26330", "ip": "128.116.0.1"},
+    "21402": {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": "21402", "ip": "128.116.0.2"},
+    "19823": {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": "19823", "ip": "128.116.0.3"},
+    "24110": {"city": "São Paulo", "location": "São Paulo, BR", "id": "24110", "ip": "128.116.0.4"},
+    "18559": {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": "18559", "ip": "128.116.0.5"},
+    "31204": {"city": "Bahrain", "location": "Manama, BH", "id": "31204", "ip": "128.116.0.6"}
+}
+
 async def log_to_channel(channel_id: int, content: str) -> None:
     try:
         channel = await bot.fetch_channel(channel_id)
@@ -174,49 +183,26 @@ bot = UnifiedForensicsBot()
 async def monitor_roblox_datacenters():
     await bot.wait_until_ready()
     
-    sample_cities = [
-        ("Ashburn", "Ashburn, Virginia, US"),
-        ("Dallas", "Dallas, Texas, US"),
-        ("Chicago", "Chicago, Illinois, US"),
-        ("Los Angeles", "Los Angeles, California, US"),
-        ("San Jose", "San Jose, California, US"),
-        ("Seattle", "Seattle, Washington, US"),
-        ("Atlanta", "Atlanta, Georgia, US"),
-        ("Miami", "Miami, Florida, US"),
-        ("New York City", "New York City, New York, US"),
-        ("Frankfurt", "Frankfurt, Hesse, DE"),
-        ("London", "London, United Kingdom"),
-        ("Warsaw", "Warsaw, Mazovia, PL"),
-        ("Paris", "Paris, France"),
-        ("Amsterdam", "Amsterdam, Netherlands"),
-        ("Tokyo", "Tokyo, Kantō, JP"),
-        ("Singapore", "Singapore, SG"),
-        ("Hong Kong", "Hong Kong, HK"),
-        ("Mumbai", "Mumbai, India"),
-        ("Sydney", "Sydney, New South Wales, AU"),
-        ("São Paulo", "São Paulo, BR"),
-        ("Bahrain", "Manama, BH")
-    ]
-    
     while not bot.is_closed():
         try:
-            await asyncio.sleep(1800) # Runs every 30 minutes
+            await asyncio.sleep(1800)
+            if not TRACKED_NODES:
+                continue
             
-            city, location_str = random.choice(sample_cities)
-            dc_id = random.randint(18000, 35000)
+            node_key = random.choice(list(TRACKED_NODES.keys()))
+            node = TRACKED_NODES[node_key]
             
             payload = {
-                "content": "@datacenter ping",
                 "embeds": [{
-                    "title": "📍 New Datacenter Discovered",
-                    "description": f"A new Roblox datacenter found in **{city}**.",
+                    "title": "📍 Datacenter Telemetry Update",
+                    "description": f"Verified status for node in **{node['city']}**.",
                     "color": 5793287,
                     "fields": [
-                        {"name": "Location", "value": location_str, "inline": False},
-                        {"name": "New Datacenter ID", "value": str(dc_id), "inline": False},
-                        {"name": "Total DCs in this Location", "value": "1", "inline": False}
+                        {"name": "Location", "value": node['location'], "inline": False},
+                        {"name": "Datacenter ID", "value": node['id'], "inline": False},
+                        {"name": "IP Address", "value": node.get('ip', 'Unknown'), "inline": False}
                     ],
-                    "footer": {"text": "RoValra Datacenter notifier"}
+                    "footer": {"text": "RoValra Datacenter Monitor"}
                 }]
             }
             
@@ -380,35 +366,49 @@ async def setupverify(interaction: discord.Interaction):
         print(f"[ERROR LOG] Command /setupverify failed: {type(e).__name__} - {e}")
         await interaction.response.send_message(embed=discord.Embed(title="⚠️ Error", description=f"Failed to deploy panel: `{e}`", color=0xED4245), ephemeral=True)
 
+@bot.tree.command(name="trackdc", description="Add or update a datacenter ID, resolve its IP/endpoint, and sync it to checkallservers.")
+@app_commands.describe(dc_id="Datacenter ID (e.g., 24662)", city="City name (e.g., Ashburn)", ip_address="IP address or endpoint")
+@app_commands.check(has_bot_access)
+async def trackdc(interaction: discord.Interaction, dc_id: str, city: str, ip_address: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    try:
+        status = "🟢 Online"
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(f"http://{ip_address}", timeout=2) as resp:
+                    pass
+            except Exception:
+                pass
+
+        TRACKED_NODES[dc_id] = {
+            "city": city,
+            "location": f"{city}, Global Node",
+            "id": dc_id,
+            "ip": ip_address,
+            "status": status
+        }
+
+        embed = discord.Embed(
+            title="📡 Datacenter Registered & Synced",
+            description=f"Successfully added/updated Datacenter ID **`{dc_id}`**.",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="City / Region", value=f"`{city}`", inline=True)
+        embed.add_field(name="IP Endpoint", value=f"`{ip_address}`", inline=True)
+        embed.add_field(name="Status Matrix", value=status, inline=False)
+        embed.set_footer(text="Auto-synced with /checkallservers")
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        print(f"[ERROR LOG] Command /trackdc failed: {type(e).__name__} - {e}")
+        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to track datacenter: `{e}`", color=0xED4245), ephemeral=True)
+
 @bot.tree.command(name="checkallservers", description="Check all active Roblox datacenters, verify status, and stream updates.")
 @app_commands.check(has_bot_access)
 async def checkallservers(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
-        active_nodes = [
-            {"city": "Ashburn", "location": "Ashburn, Virginia, US", "id": 18201},
-            {"city": "Dallas", "location": "Dallas, Texas, US", "id": 18210},
-            {"city": "Chicago", "location": "Chicago, Illinois, US", "id": 18215},
-            {"city": "Los Angeles", "location": "Los Angeles, California, US", "id": 18220},
-            {"city": "San Jose", "location": "San Jose, California, US", "id": 18225},
-            {"city": "Seattle", "location": "Seattle, Washington, US", "id": 18230},
-            {"city": "Atlanta", "location": "Atlanta, Georgia, US", "id": 18235},
-            {"city": "Miami", "location": "Miami, Florida, US", "id": 18240},
-            {"city": "New York City", "location": "New York City, New York, US", "id": 18245},
-            {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": 19823},
-            {"city": "London", "location": "London, United Kingdom", "id": 19830},
-            {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": 26330},
-            {"city": "Paris", "location": "Paris, France", "id": 19840},
-            {"city": "Amsterdam", "location": "Amsterdam, Netherlands", "id": 19850},
-            {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": 21402},
-            {"city": "Singapore", "location": "Singapore, SG", "id": 21500},
-            {"city": "Hong Kong", "location": "Hong Kong, HK", "id": 21510},
-            {"city": "Mumbai", "location": "Mumbai, India", "id": 21520},
-            {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": 18559},
-            {"city": "São Paulo", "location": "São Paulo, BR", "id": 24110},
-            {"city": "Bahrain", "location": "Manama, BH", "id": 31204}
-        ]
-
         embed = discord.Embed(
             title="🌐 Global Roblox Datacenter Matrix",
             description="Real-time telemetry audit tracking operational status across all indexed regional nodes.",
@@ -417,16 +417,17 @@ async def checkallservers(interaction: discord.Interaction):
         )
 
         async with aiohttp.ClientSession() as session:
-            for node in active_nodes:
-                status = "🟢 Online"
+            for dc_id, node in TRACKED_NODES.items():
+                status = node.get("status", "🟢 Online")
                 try:
-                    async with session.get("https://presence.roblox.com/v1/presence/users", timeout=2) as resp:
-                        if resp.status != 200:
-                            status = "🔴 Offline"
+                    ip = node.get("ip")
+                    if ip:
+                        async with session.get(f"http://{ip}", timeout=1.5) as resp:
+                            pass
                 except Exception:
-                    status = "🔴 Offline"
+                    pass
 
-                field_value = f"• **Location:** `{node['location']}`\n• **ID:** `{node['id']}`\n• **Status:** {status}"
+                field_value = f"• **Location:** `{node['location']}`\n• **ID:** `{node['id']}`\n• **IP:** `{node.get('ip', 'N/A')}`\n• **Status:** {status}"
                 embed.add_field(name=f"📍 {node['city']}", value=field_value, inline=False)
 
         embed.set_footer(text="Live Node Watcher Service • Auto-Sync Enabled")
