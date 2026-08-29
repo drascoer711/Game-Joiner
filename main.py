@@ -404,6 +404,43 @@ async def trackdc(interaction: discord.Interaction, dc_id: str, city: str, ip_ad
         print(f"[ERROR LOG] Command /trackdc failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to track datacenter: `{e}`", color=0xED4245), ephemeral=True)
 
+@bot.tree.command(name="processdc", description="Process and log a new IP address for a datacenter.")
+@app_commands.describe(dc_id="Datacenter ID (e.g., 26259)", ip_address="New IP address", location="Location name (e.g., Kuala Lumpur, MY)")
+@app_commands.check(has_bot_access)
+async def processdc(interaction: discord.Interaction, dc_id: str, ip_address: str, location: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    try:
+        TRACKED_NODES[dc_id] = {
+            "city": location.split(",")[0].strip(),
+            "location": location,
+            "id": dc_id,
+            "ip": ip_address,
+            "status": "🟢 Online"
+        }
+
+        embed = discord.Embed(
+            title="✅ New IP Address Processed & Logged",
+            description=f"The new IP for datacenter `{dc_id}` has been successfully processed.",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=False)
+        embed.add_field(name="New IP Address", value=f"`{ip_address}`", inline=False)
+        embed.add_field(name="Location", value=f"`{location}`", inline=False)
+        embed.set_footer(text="RoValra Datacenter Monitor")
+
+        payload = {
+            "embeds": [embed.to_dict()]
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(WEBHOOK_URL, json=payload) as resp:
+                pass
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        print(f"[ERROR LOG] Command /processdc failed: {type(e).__name__} - {e}")
+        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to process datacenter IP: `{e}`", color=0xED4245), ephemeral=True)
+
 @bot.tree.command(name="checkallservers", description="Check all active Roblox datacenters, verify status, and stream updates.")
 @app_commands.check(has_bot_access)
 async def checkallservers(interaction: discord.Interaction):
