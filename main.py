@@ -40,14 +40,14 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-# Updated with official Roblox infrastructure subnet endpoints and regional data
+# Datacenter nodes indexed primarily by Datacenter ID
 TRACKED_NODES = {
-    "26330": {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": "26330", "ip": "128.116.31.0"},
-    "21402": {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": "21402", "ip": "128.116.55.0"},
-    "19823": {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": "19823", "ip": "128.116.5.0"},
-    "24110": {"city": "São Paulo", "location": "São Paulo, BR", "id": "24110", "ip": "128.116.45.0"},
-    "18559": {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": "18559", "ip": "128.116.51.0"},
-    "31204": {"city": "Ashburn", "location": "Ashburn, Virginia, US", "id": "31204", "ip": "128.116.102.0"}
+    "26330": {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": "26330"},
+    "21402": {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": "21402"},
+    "19823": {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": "19823"},
+    "24110": {"city": "São Paulo", "location": "São Paulo, BR", "id": "24110"},
+    "18559": {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": "18559"},
+    "31204": {"city": "Ashburn", "location": "Ashburn, Virginia, US", "id": "31204"}
 }
 
 async def log_to_channel(channel_id: int, content: str) -> None:
@@ -200,8 +200,7 @@ async def monitor_roblox_datacenters():
                     "color": 5793287,
                     "fields": [
                         {"name": "Location", "value": node['location'], "inline": False},
-                        {"name": "Datacenter ID", "value": node['id'], "inline": False},
-                        {"name": "IP Address", "value": node.get('ip', 'Unknown'), "inline": False}
+                        {"name": "Datacenter ID", "value": node['id'], "inline": False}
                     ],
                     "footer": {"text": "Enterprise Datacenter Monitor"}
                 }]
@@ -367,10 +366,10 @@ async def setupverify(interaction: discord.Interaction):
         print(f"[ERROR LOG] Command /setupverify failed: {type(e).__name__} - {e}")
         await interaction.response.send_message(embed=discord.Embed(title="⚠️ Error", description=f"Failed to deploy panel: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="processdc", description="Process and log a new IP address for a datacenter if city differs.")
-@app_commands.describe(dc_id="Datacenter ID (e.g., 26259)", ip_address="New IP address", location="Location name (e.g., Kuala Lumpur, MY)")
+@bot.tree.command(name="processdc", description="Process and log a datacenter node by its ID and location.")
+@app_commands.describe(dc_id="Datacenter ID (e.g., 26330)", location="Location name (e.g., Warsaw, Mazovia, PL)")
 @app_commands.check(has_bot_access)
-async def processdc(interaction: discord.Interaction, dc_id: str, ip_address: str, location: str):
+async def processdc(interaction: discord.Interaction, dc_id: str, location: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
         new_city = location.split(",")[0].strip().lower()
@@ -379,7 +378,7 @@ async def processdc(interaction: discord.Interaction, dc_id: str, ip_address: st
         if existing_node and existing_node.get("city", "").strip().lower() == new_city:
             embed = discord.Embed(
                 title="⚠️ Sync Skipped",
-                description=f"Datacenter `{dc_id}` is already registered in **{existing_node.get('city')}**. Webhook and checkallservers sync were skipped because the city is the same.",
+                description=f"Datacenter `{dc_id}` is already registered in **{existing_node.get('city')}**.",
                 color=0xFEE75C,
                 timestamp=datetime.now(timezone.utc)
             )
@@ -390,18 +389,16 @@ async def processdc(interaction: discord.Interaction, dc_id: str, ip_address: st
             "city": location.split(",")[0].strip(),
             "location": location,
             "id": dc_id,
-            "ip": ip_address,
             "status": "🟢 Online"
         }
 
         embed = discord.Embed(
-            title="✅ New IP Address Processed & Logged",
-            description=f"The new IP for datacenter `{dc_id}` has been successfully processed.",
+            title="✅ Datacenter Node Processed & Logged",
+            description=f"Datacenter node `{dc_id}` has been successfully registered.",
             color=0x57F287,
             timestamp=datetime.now(timezone.utc)
         )
         embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=False)
-        embed.add_field(name="New IP Address", value=f"`{ip_address}`", inline=False)
         embed.add_field(name="Location", value=f"`{location}`", inline=False)
         embed.set_footer(text="Enterprise Datacenter Monitor")
 
@@ -415,7 +412,7 @@ async def processdc(interaction: discord.Interaction, dc_id: str, ip_address: st
         await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
         print(f"[ERROR LOG] Command /processdc failed: {type(e).__name__} - {e}")
-        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to process datacenter IP: `{e}`", color=0xED4245), ephemeral=True)
+        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to process datacenter node: `{e}`", color=0xED4245), ephemeral=True)
 
 @bot.tree.command(name="checkallservers", description="Check all active Roblox datacenters, verify status, and stream updates.")
 @app_commands.check(has_bot_access)
@@ -429,19 +426,10 @@ async def checkallservers(interaction: discord.Interaction):
             timestamp=datetime.now(timezone.utc)
         )
 
-        async with aiohttp.ClientSession() as session:
-            for dc_id, node in TRACKED_NODES.items():
-                status = node.get("status", "🟢 Online")
-                try:
-                    ip = node.get("ip")
-                    if ip:
-                        async with session.get(f"http://{ip}", timeout=1.5) as resp:
-                            pass
-                except Exception:
-                    pass
-
-                field_value = f"• **Location:** `{node['location']}`\n• **ID:** `{node['id']}`\n• **IP:** `{node.get('ip', 'N/A')}`\n• **Status:** {status}"
-                embed.add_field(name=f"📍 {node['city']}", value=field_value, inline=False)
+        for dc_id, node in TRACKED_NODES.items():
+            status = node.get("status", "🟢 Online")
+            field_value = f"• **Location:** `{node['location']}`\n• **ID:** `{node['id']}`\n• **Status:** {status}"
+            embed.add_field(name=f"📍 {node['city']}", value=field_value, inline=False)
 
         embed.set_footer(text="Live Node Watcher Service • Auto-Sync Enabled")
         await interaction.followup.send(embed=embed, ephemeral=True)
