@@ -40,13 +40,14 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
+# Updated with official Roblox infrastructure subnet endpoints and regional data
 TRACKED_NODES = {
-    "26330": {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": "26330", "ip": "128.116.0.1"},
-    "21402": {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": "21402", "ip": "128.116.0.2"},
-    "19823": {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": "19823", "ip": "128.116.0.3"},
-    "24110": {"city": "São Paulo", "location": "São Paulo, BR", "id": "24110", "ip": "128.116.0.4"},
-    "18559": {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": "18559", "ip": "128.116.0.5"},
-    "31204": {"city": "Bahrain", "location": "Manama, BH", "id": "31204", "ip": "128.116.0.6"}
+    "26330": {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": "26330", "ip": "128.116.31.0"},
+    "21402": {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": "21402", "ip": "128.116.55.0"},
+    "19823": {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": "19823", "ip": "128.116.5.0"},
+    "24110": {"city": "São Paulo", "location": "São Paulo, BR", "id": "24110", "ip": "128.116.45.0"},
+    "18559": {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": "18559", "ip": "128.116.51.0"},
+    "31204": {"city": "Ashburn", "location": "Ashburn, Virginia, US", "id": "31204", "ip": "128.116.102.0"}
 }
 
 async def log_to_channel(channel_id: int, content: str) -> None:
@@ -202,7 +203,7 @@ async def monitor_roblox_datacenters():
                         {"name": "Datacenter ID", "value": node['id'], "inline": False},
                         {"name": "IP Address", "value": node.get('ip', 'Unknown'), "inline": False}
                     ],
-                    "footer": {"text": "RoValra Datacenter Monitor"}
+                    "footer": {"text": "Enterprise Datacenter Monitor"}
                 }]
             }
             
@@ -402,7 +403,7 @@ async def processdc(interaction: discord.Interaction, dc_id: str, ip_address: st
         embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=False)
         embed.add_field(name="New IP Address", value=f"`{ip_address}`", inline=False)
         embed.add_field(name="Location", value=f"`{location}`", inline=False)
-        embed.set_footer(text="RoValra Datacenter Monitor")
+        embed.set_footer(text="Enterprise Datacenter Monitor")
 
         payload = {
             "embeds": [embed.to_dict()]
