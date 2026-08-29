@@ -366,50 +366,25 @@ async def setupverify(interaction: discord.Interaction):
         print(f"[ERROR LOG] Command /setupverify failed: {type(e).__name__} - {e}")
         await interaction.response.send_message(embed=discord.Embed(title="⚠️ Error", description=f"Failed to deploy panel: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="trackdc", description="Add or update a datacenter ID, resolve its IP/endpoint, and sync it to checkallservers.")
-@app_commands.describe(dc_id="Datacenter ID (e.g., 24662)", city="City name (e.g., Ashburn)", ip_address="IP address or endpoint")
-@app_commands.check(has_bot_access)
-async def trackdc(interaction: discord.Interaction, dc_id: str, city: str, ip_address: str):
-    await interaction.response.defer(thinking=True, ephemeral=True)
-    try:
-        status = "🟢 Online"
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(f"http://{ip_address}", timeout=2) as resp:
-                    pass
-            except Exception:
-                pass
-
-        TRACKED_NODES[dc_id] = {
-            "city": city,
-            "location": f"{city}, Global Node",
-            "id": dc_id,
-            "ip": ip_address,
-            "status": status
-        }
-
-        embed = discord.Embed(
-            title="📡 Datacenter Registered & Synced",
-            description=f"Successfully added/updated Datacenter ID **`{dc_id}`**.",
-            color=0x57F287,
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.add_field(name="City / Region", value=f"`{city}`", inline=True)
-        embed.add_field(name="IP Endpoint", value=f"`{ip_address}`", inline=True)
-        embed.add_field(name="Status Matrix", value=status, inline=False)
-        embed.set_footer(text="Auto-synced with /checkallservers")
-
-        await interaction.followup.send(embed=embed, ephemeral=True)
-    except Exception as e:
-        print(f"[ERROR LOG] Command /trackdc failed: {type(e).__name__} - {e}")
-        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to track datacenter: `{e}`", color=0xED4245), ephemeral=True)
-
-@bot.tree.command(name="processdc", description="Process and log a new IP address for a datacenter.")
+@bot.tree.command(name="processdc", description="Process and log a new IP address for a datacenter if city differs.")
 @app_commands.describe(dc_id="Datacenter ID (e.g., 26259)", ip_address="New IP address", location="Location name (e.g., Kuala Lumpur, MY)")
 @app_commands.check(has_bot_access)
 async def processdc(interaction: discord.Interaction, dc_id: str, ip_address: str, location: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
+        new_city = location.split(",")[0].strip().lower()
+        existing_node = TRACKED_NODES.get(dc_id)
+        
+        if existing_node and existing_node.get("city", "").strip().lower() == new_city:
+            embed = discord.Embed(
+                title="⚠️ Sync Skipped",
+                description=f"Datacenter `{dc_id}` is already registered in **{existing_node.get('city')}**. Webhook and checkallservers sync were skipped because the city is the same.",
+                color=0xFEE75C,
+                timestamp=datetime.now(timezone.utc)
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
         TRACKED_NODES[dc_id] = {
             "city": location.split(",")[0].strip(),
             "location": location,
