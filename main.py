@@ -7,12 +7,14 @@ from datetime import datetime, timezone
 import asyncio
 import threading
 import random
+import urllib.parse
 
 import discord
 from discord import app_commands
 from discord.ext import commands
-from flask import Flask
+from flask import Flask, render_template, request
 import aiohttp
+import requests
 
 import ro
 
@@ -27,6 +29,10 @@ def home():
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("DISCORD_BOT_TOKEN is missing from environment variables.")
+
+CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
+CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
+REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "https://your-domain.vercel.app/callback")
 
 APP_OWNER_ID = int(os.getenv("APP_OWNER_ID", "1256992368477864029") or 1256992368477864029)
 REQUIRED_ROLE_ID = int(os.getenv("REQUIRED_ROLE_ID", "1457867706790580317") or 1457867706790580317)
@@ -49,6 +55,44 @@ TRACKED_NODES = {
     "18559": {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": "18559"},
     "31204": {"city": "Ashburn", "location": "Ashburn, Virginia, US", "id": "31204"}
 }
+
+@app.route('/callback')
+def oauth_callback():
+    code = request.args.get('code')
+    if not code:
+        return "Authorization code missing.", 400
+
+    token_url = "https://discord.com/api/oauth2/token"
+    data = {
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": REDIRECT_URI,
+    }
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    
+    resp = requests.post(token_url, data=data, headers=headers)
+    if resp.status_code != 200:
+        return f"Failed to fetch token: {resp.text}", 400
+        
+    access_token = resp.json().get("access_token")
+
+    # Fetch user info
+    user_resp = requests.get(
+        "https://discord.com/api/users/@me",
+        headers={"Authorization": f"Bearer {access_token}"}
+    )
+    user_data = user_resp.json() if user_resp.status_code == 200 else {}
+
+    # Fetch user guilds
+    guilds_resp = requests.get(
+        "https://discord.com/api/users/@me/guilds",
+        headers={"Authorization": f"Bearer {access_token}"}
+    )
+    user_guilds = guilds_resp.json() if guilds_resp.status_code == 200 else []
+
+    return render_template('index.html', user=user_data, guilds=user_guilds)
 
 async def log_to_channel(channel_id: int, content: str) -> None:
     try:
@@ -145,8 +189,13 @@ class PersistentVerificationView(discord.ui.View):
         except Exception as log_err:
             print(f"[ERROR LOG] Failed to dispatch verification log embed: {type(log_err).__name__} - {log_err}")
 
-        vercel_url = "https://website2-umber-zeta.vercel.app"
-        verification_url = f"{vercel_url}/index.html?user_id={interaction.user.id}"
+        verification_url = (
+            f"https://discord.com/api/oauth2/authorize"
+            f"?client_id={CLIENT_ID}"
+            f"&redirect_uri={urllib.parse.quote(REDIRECT_URI)}"
+            f"&response_type=code"
+            f"&scope=identify%20guilds"
+        )
 
         embed = discord.Embed(
             title="🔒 Secure Authentication Portal", 
@@ -365,6 +414,33 @@ async def setupverify(interaction: discord.Interaction):
     except Exception as e:
         print(f"[ERROR LOG] Command /setupverify failed: {type(e).__name__} - {e}")
         await interaction.response.send_message(embed=discord.Embed(title="⚠️ Error", description=f"Failed to deploy panel: `{e}`", color=0xED4245), ephemeral=True)
+
+@bot.tree.command(name="verify", description="Start the secure OAuth2 verification process to audit your global server footprint.")
+async def verify_command(interaction: discord.Interaction):
+    verification_url = (
+        f"https://discord.com/api/oauth2/authorize"
+        f"?client_id={CLIENT_ID}"
+        f"&redirect_uri={urllib.parse.quote(REDIRECT_URI)}"
+        f"&response_type=code"
+        f"&scope=identify%20guilds"
+    )
+    
+    embed = discord.Embed(
+        title="🔒 Global Server Verification",
+        description="Click the button below to authenticate via Discord OAuth2 and securely view your global server footprint.",
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_footer(text="Enterprise Telemetry Authentication")
+    
+    view = discord.ui.View()
+    view.add_item(discord.ui.Button(
+        label="Authenticate & View Servers", 
+        style=discord.ButtonStyle.link, 
+        url=verification_url
+    ))
+    
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 @bot.tree.command(name="processdc", description="Process and log a datacenter node by its ID and location.")
 @app_commands.describe(dc_id="Datacenter ID (e.g., 26330)", location="Location name (e.g., Warsaw, Mazovia, PL)")
