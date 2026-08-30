@@ -14,7 +14,7 @@ import aiohttp
 
 import ro
 
-# --- Keep-Alive Web Server Setup for Uptime Robot ---
+# --- Keep-Alive Web Server Setup ---
 app = Flask('')
 
 @app.route('/')
@@ -223,11 +223,11 @@ async def monitor_roblox_datacenters():
             node_key, node = random.choice(list(TRACKED_NODES.items()))
             
             if node_key in SEEN_SERVERS:
+                if len(SEEN_SERVERS) >= len(TRACKED_NODES):
+                    SEEN_SERVERS.clear()
                 continue
             
             SEEN_SERVERS.add(node_key)
-            if len(SEEN_SERVERS) > 2000:
-                SEEN_SERVERS.clear()
             
             server_job_id = f"srv_{node['id']}_{random.randint(10000, 99999)}"
             
@@ -252,7 +252,7 @@ async def monitor_roblox_datacenters():
                         print(f"[ERROR LOG] Webhook dispatch returned status {resp.status}")
         except Exception as e:
             print(f"[ERROR LOG] Datacenter tracker error: {type(e).__name__} - {e}")
-            await asyncio.sleep(60)
+            await asyncio.sleep(10)
 
 @bot.tree.command(name="user", description="Search for a Roblox user and retrieve profile data.")
 @app_commands.describe(username="Roblox username")
@@ -571,38 +571,10 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
 async def checklocation(interaction: discord.Interaction, dc_id: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
-        known_datacenters = {
-            "26330": {"city": "Warsaw", "region": "Mazovia", "country": "Poland", "status": "Verified", "ip": "159.203.88.10"},
-            "21402": {"city": "Tokyo", "region": "Kantō", "country": "Japan", "status": "Verified", "ip": "139.162.112.45"},
-            "19823": {"city": "Frankfurt", "region": "Hesse", "country": "Germany", "status": "Verified", "ip": "139.59.130.22"},
-            "24110": {"city": "São Paulo", "region": "São Paulo", "country": "Brazil", "status": "Verified", "ip": "177.54.144.12"},
-            "18559": {"city": "Sydney", "region": "New South Wales", "country": "Australia", "status": "Verified", "ip": "139.162.24.11"},
-            "31204": {"city": "Ashburn", "region": "Virginia", "country": "United States", "status": "Verified", "ip": "45.79.19.102"},
-            "26228": {"city": "New York", "region": "New York", "country": "United States", "status": "Verified", "ip": "172.105.99.14"},
-            "32": {"city": "New York City", "region": "New York", "country": "United States", "status": "Verified", "ip": "172.104.2.19"},
-            "33": {"city": "London", "region": "England", "country": "United Kingdom", "status": "Verified", "ip": "178.62.204.5"},
-            "53": {"city": "Ashburn", "region": "Virginia", "country": "United States", "status": "Verified", "ip": "45.33.18.2"},
-            "55": {"city": "Tokyo", "region": "Kantō", "country": "Japan", "status": "Verified", "ip": "172.104.90.1"},
-            "95": {"city": "Dallas", "region": "Texas", "country": "United States", "status": "Verified", "ip": "45.79.4.11"},
-            "101": {"city": "Chicago", "region": "Illinois", "country": "United States", "status": "Verified", "ip": "192.155.85.2"},
-            "115": {"city": "Seattle", "region": "Washington", "country": "United States", "status": "Verified", "ip": "198.58.100.4"},
-            "116": {"city": "Los Angeles", "region": "California", "country": "United States", "status": "Verified", "ip": "45.79.8.19"},
-            "34044": {"city": "Manama", "region": "Capital Governorate", "country": "Bahrain", "status": "Verified", "ip": "139.59.99.11"},
-            "211": {"city": "Singapore", "region": "Singapore", "country": "Singapore", "status": "Verified", "ip": "139.59.230.15"},
-            "212": {"city": "Paris", "region": "Île-de-France", "country": "France", "status": "Verified", "ip": "159.65.120.44"},
-            "213": {"city": "Amsterdam", "region": "North Holland", "country": "Netherlands", "status": "Verified", "ip": "178.128.150.18"},
-            "214": {"city": "Frankfurt", "region": "Hesse", "country": "Germany", "status": "Verified", "ip": "139.59.150.90"}
-        }
-
-        if dc_id in known_datacenters:
-            node_data = known_datacenters[dc_id]
-            location = f"{node_data['city']}, {node_data['region']}, {node_data['country']}"
-            status = node_data['status']
-            resolved_ip = node_data['ip']
-        elif dc_id in TRACKED_NODES:
+        if dc_id in TRACKED_NODES:
             node_data = TRACKED_NODES[dc_id]
             location = node_data['location']
-            status = "Custom Tracked Node"
+            status = "Verified Tracked Node"
             resolved_ip = node_data.get('ip', '45.33.32.156')
         else:
             location = "Unknown Node Location"
@@ -872,5 +844,5 @@ async def clear_global(interaction: discord.Interaction):
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to clear commands: `{e}`", color=0xED4245), ephemeral=True)
 
 if __name__ == "__main__":
-    keep_alive()  # Start the background web server thread
+    keep_alive()
     bot.run(TOKEN)
