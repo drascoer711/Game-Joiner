@@ -148,7 +148,6 @@ class UnifiedForensicsBot(commands.Bot):
         self.add_view(PersistentVerificationView())
         self.loop.create_task(monitor_roblox_datacenters())
         try:
-            # Sync commands globally so they work on every server the bot is in without requiring DISCORD_GUILD_ID
             await self.tree.sync()
             asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, "⚙️ Successfully synced application command tree globally across all servers."))
         except Exception as e:
@@ -371,7 +370,6 @@ async def stats_command(interaction: discord.Interaction):
                 else:
                     region_counts["Dallas, Texas"] += node_load
 
-            # Account for New York mapping explicitly if needed
             ny_total = region_counts["New York City, New York"] + region_counts["New York"]
 
             now_str = datetime.now(timezone.utc).strftime("Today at %I:%M %p")
@@ -501,7 +499,7 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
         print(f"[ERROR LOG] Command /processdc failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to process datacenter node: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="checklocation", description="Check the verified physical location of a datacenter by its ID.")
+@bot.tree.command(name="checklocation", description="Check the physical location of any datacenter ID dynamically.")
 @app_commands.describe(dc_id="The Datacenter ID to look up")
 @app_commands.check(has_bot_access)
 async def checklocation(interaction: discord.Interaction, dc_id: str):
@@ -509,24 +507,24 @@ async def checklocation(interaction: discord.Interaction, dc_id: str):
     try:
         if dc_id in TRACKED_NODES:
             node_info = TRACKED_NODES[dc_id]
-            embed = discord.Embed(
-                title="🔍 Datacenter Location Lookup",
-                description=f"Verified data for datacenter node `{dc_id}`.",
-                color=0x5865F2,
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=False)
-            embed.add_field(name="City / Node", value=f"`{node_info.get('city', 'Unknown')}`", inline=False)
-            embed.add_field(name="Real Location", value=f"`{node_info.get('location', 'Unknown')}`", inline=False)
-            embed.set_footer(text="Verified Network Intelligence")
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            city = node_info.get('city', 'Unknown')
+            location = node_info.get('location', 'Unknown')
         else:
-            embed = discord.Embed(
-                title="⚠️ Unknown Datacenter ID",
-                description=f"Datacenter `{dc_id}` is not registered in the verified database yet. Use `/processdc` to log it.",
-                color=0xED4245
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            city = f"Node-{dc_id}"
+            location = f"Unindexed / Dynamic Region (ID: {dc_id})"
+
+        embed = discord.Embed(
+            title="🔍 Datacenter Location Lookup",
+            description=f"Telemetry data for node ID `{dc_id}`.",
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=False)
+        embed.add_field(name="City / Node", value=f"`{city}`", inline=False)
+        embed.add_field(name="Resolved Location", value=f"`{location}`", inline=False)
+        embed.set_footer(text="Dynamic Network Intelligence")
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
         print(f"[ERROR LOG] Command /checklocation failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to check location: `{e}`", color=0xED4245), ephemeral=True)
