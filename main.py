@@ -38,7 +38,8 @@ TRACKED_NODES = {
     "19823": {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": "19823"},
     "24110": {"city": "São Paulo", "location": "São Paulo, BR", "id": "24110"},
     "18559": {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": "18559"},
-    "31204": {"city": "Ashburn", "location": "Ashburn, Virginia, US", "id": "31204"}
+    "31204": {"city": "Ashburn", "location": "Ashburn, Virginia, US", "id": "31204"},
+    "26228": {"city": "New York", "location": "New York, US", "id": "26228"}
 }
 
 async def log_to_channel(channel_id: int, content: str) -> None:
@@ -147,13 +148,9 @@ class UnifiedForensicsBot(commands.Bot):
         self.add_view(PersistentVerificationView())
         self.loop.create_task(monitor_roblox_datacenters())
         try:
-            if DISCORD_GUILD_ID:
-                guild = discord.Object(id=int(DISCORD_GUILD_ID))
-                self.tree.copy_global_to(guild=guild)
-                await self.tree.sync(guild=guild)
-            else:
-                await self.tree.sync()
-            asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, "⚙️ Successfully synced application command tree."))
+            # Sync commands globally so they work on every server the bot is in without requiring DISCORD_GUILD_ID
+            await self.tree.sync()
+            asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, "⚙️ Successfully synced application command tree globally across all servers."))
         except Exception as e:
             print(f"[ERROR LOG] Failed to sync commands tree: {type(e).__name__} - {e}")
 
@@ -361,7 +358,7 @@ async def stats_command(interaction: discord.Interaction):
                 "Singapore": 0, "Tokyo": 0, "Mumbai": 0, "Sydney": 0, "Cape Town": 0,
                 "Frankfurt am Main": 0, "London": 0, "Paris": 0, "Amsterdam": 0,
                 "Dallas, Texas": 0, "Ashburn, Virginia": 0, "Los Angeles, California": 0,
-                "New York City, New York": 0, "Chicago, Illinois": 0, "Atlanta, Georgia": 0,
+                "New York City, New York": 0, "New York": 0, "Chicago, Illinois": 0, "Atlanta, Georgia": 0,
                 "Miami, Florida": 0, "Seattle, Washington": 0, "São Paulo": 0
             }
             
@@ -373,6 +370,9 @@ async def stats_command(interaction: discord.Interaction):
                     region_counts[city] += node_load
                 else:
                     region_counts["Dallas, Texas"] += node_load
+
+            # Account for New York mapping explicitly if needed
+            ny_total = region_counts["New York City, New York"] + region_counts["New York"]
 
             now_str = datetime.now(timezone.utc).strftime("Today at %I:%M %p")
             footer_text = f"RoValra Telemetry Matrix • Updates every minute | {now_str}"
@@ -398,7 +398,7 @@ async def stats_command(interaction: discord.Interaction):
                     f"🇺🇸 **Dallas, Texas**\n└ `{region_counts['Dallas, Texas']:,}` servers\n"
                     f"🇺🇸 **Ashburn, Virginia**\n└ `{region_counts['Ashburn, Virginia']:,}` servers\n"
                     f"🇺🇸 **Los Angeles, California**\n└ `{region_counts['Los Angeles, California']:,}` servers\n"
-                    f"🇺🇸 **New York City, New York**\n└ `{region_counts['New York City, New York']:,}` servers"
+                    f"🇺🇸 **New York City, New York**\n└ `{ny_total:,}` servers"
                 ),
                 inline=False
             )
@@ -454,7 +454,7 @@ async def stats_command(interaction: discord.Interaction):
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to generate stats: `{e}`", color=0xED4245), ephemeral=True)
 
 @bot.tree.command(name="processdc", description="Process and log a datacenter node by its ID and location.")
-@app_commands.describe(dc_id="Datacenter ID (e.g., 26330)", location="Location name (e.g., Warsaw, Mazovia, PL)")
+@app_commands.describe(dc_id="Datacenter ID (e.g., 26228)", location="Location name (e.g., New York, US)")
 @app_commands.check(has_bot_access)
 async def processdc(interaction: discord.Interaction, dc_id: str, location: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
@@ -500,6 +500,36 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
     except Exception as e:
         print(f"[ERROR LOG] Command /processdc failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to process datacenter node: `{e}`", color=0xED4245), ephemeral=True)
+
+@bot.tree.command(name="checklocation", description="Check the verified physical location of a datacenter by its ID.")
+@app_commands.describe(dc_id="The Datacenter ID to look up")
+@app_commands.check(has_bot_access)
+async def checklocation(interaction: discord.Interaction, dc_id: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    try:
+        if dc_id in TRACKED_NODES:
+            node_info = TRACKED_NODES[dc_id]
+            embed = discord.Embed(
+                title="🔍 Datacenter Location Lookup",
+                description=f"Verified data for datacenter node `{dc_id}`.",
+                color=0x5865F2,
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=False)
+            embed.add_field(name="City / Node", value=f"`{node_info.get('city', 'Unknown')}`", inline=False)
+            embed.add_field(name="Real Location", value=f"`{node_info.get('location', 'Unknown')}`", inline=False)
+            embed.set_footer(text="Verified Network Intelligence")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            embed = discord.Embed(
+                title="⚠️ Unknown Datacenter ID",
+                description=f"Datacenter `{dc_id}` is not registered in the verified database yet. Use `/processdc` to log it.",
+                color=0xED4245
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        print(f"[ERROR LOG] Command /checklocation failed: {type(e).__name__} - {e}")
+        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to check location: `{e}`", color=0xED4245), ephemeral=True)
 
 @bot.tree.command(name="checkallservers", description="Check all active Roblox datacenters, verify status, and stream updates.")
 @app_commands.check(has_bot_access)
