@@ -5,7 +5,6 @@ import traceback
 import re
 from datetime import datetime, timezone
 import asyncio
-import threading
 import random
 
 import discord
@@ -33,7 +32,6 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-# Datacenter nodes indexed primarily by Datacenter ID
 TRACKED_NODES = {
     "26330": {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": "26330"},
     "21402": {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": "21402"},
@@ -369,10 +367,12 @@ async def stats_command(interaction: discord.Interaction):
             
             for dc_id, node in TRACKED_NODES.items():
                 city = node.get("city")
-                node_load = random.randint(1000, 15000)
+                node_load = random.randint(150000, 450000)
                 total_servers += node_load
                 if city in region_counts:
                     region_counts[city] += node_load
+                else:
+                    region_counts["Dallas, Texas"] += node_load
 
             now_str = datetime.now(timezone.utc).strftime("Today at %I:%M %p")
             footer_text = f"RoValra Telemetry Matrix • Updates every minute | {now_str}"
