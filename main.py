@@ -1,5 +1,5 @@
-from __future__ import annotations
-
+from flask import Flask
+from threading import Thread
 import os
 import traceback
 import re
@@ -14,8 +14,23 @@ import aiohttp
 
 import ro
 
+# --- Keep-Alive Web Server Setup for Uptime Robot ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is active and running!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.start()
+# ----------------------------------------------------
+
 WEBHOOK_URL = "https://discord.com/api/webhooks/1543009921182998689/44mddyWrHOg6Jbsmyn6JQOn9rDF_P5-7g7h060o4W0rs0cSQFT7KsCyHBN7ytKDJZSnJ"
-DATACENTER_ALERT_WEBHOOK_URL = "https://discord.com/api/webhooks/1543009921182998689/44mddyWrHOg6Jbsmyn6JQOn9rDF_P5-7g7h060o4W0rs0cSQFT7KsCyHBN7ytKDJZSnJ"  # Replace this string with your new unique alert webhook URL
+DATACENTER_ALERT_WEBHOOK_URL = "https://discord.com/api/webhooks/1543009921182998689/44mddyWrHOg6Jbsmyn6JQOn9rDF_P5-7g7h060o4W0rs0cSQFT7KsCyHBN7ytKDJZSnJ"
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 if not TOKEN:
@@ -197,8 +212,6 @@ async def monitor_roblox_datacenters():
             if len(SEEN_SERVERS) > 2000:
                 SEEN_SERVERS.pop()
             
-            resolved_ip = f"128.116.{node['id'][-2:] if len(node['id']) >= 2 else node['id']}.33"
-            
             payload = {
                 "embeds": [{
                     "title": "🚨 New Unique Datacenter Server Detected",
@@ -207,7 +220,7 @@ async def monitor_roblox_datacenters():
                     "fields": [
                         {"name": "Location", "value": node['location'], "inline": False},
                         {"name": "Datacenter ID", "value": node['id'], "inline": True},
-                        {"name": "Resolved IP Address", "value": f"`{resolved_ip}`", "inline": True},
+                        {"name": "Resolved IP Address", "value": "`Protected Infrastructure (Masked)`", "inline": True},
                         {"name": "Server Instance ID", "value": f"`{server_job_id}`", "inline": False}
                     ],
                     "footer": {"text": "Enterprise Datacenter Monitor • Anti-Duplicate Guard Active"}
@@ -506,8 +519,6 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
             "status": "🟢 Online"
         }
 
-        resolved_ip = f"128.116.{dc_id[-2:] if len(dc_id) >= 2 else dc_id}.33"
-
         embed = discord.Embed(
             title="✅ Datacenter Node Processed & Logged",
             description=f"Datacenter node `{dc_id}` has been successfully registered.",
@@ -515,7 +526,6 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
             timestamp=datetime.now(timezone.utc)
         )
         embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=True)
-        embed.add_field(name="Resolved IP Address", value=f"`{resolved_ip}`", inline=True)
         embed.add_field(name="Location", value=f"`{location}`", inline=False)
         embed.set_footer(text="Enterprise Datacenter Monitor")
 
@@ -531,66 +541,61 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
         print(f"[ERROR LOG] Command /processdc failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to process datacenter node: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="checklocation", description="Check the physical location and matching IP layout of any datacenter ID.")
+@bot.tree.command(name="checklocation", description="Check the physical location and status of any known Roblox datacenter ID.")
 @app_commands.describe(dc_id="The Datacenter ID to look up")
 @app_commands.check(has_bot_access)
 async def checklocation(interaction: discord.Interaction, dc_id: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
         known_datacenters = {
-            "26330": {"city": "Warsaw", "region": "Mazovia", "country": "Poland"},
-            "21402": {"city": "Tokyo", "region": "Kantō", "country": "Japan"},
-            "19823": {"city": "Frankfurt", "region": "Hesse", "country": "Germany"},
-            "24110": {"city": "São Paulo", "region": "São Paulo", "country": "Brazil"},
-            "18559": {"city": "Sydney", "region": "New South Wales", "country": "Australia"},
-            "31204": {"city": "Ashburn", "region": "Virginia", "country": "United States"},
-            "26228": {"city": "New York", "region": "New York", "country": "United States"},
-            "32": {"city": "New York City", "region": "New York", "country": "United States"},
-            "33": {"city": "London", "region": "England", "country": "United Kingdom"},
-            "53": {"city": "Ashburn", "region": "Virginia", "country": "United States"},
-            "55": {"city": "Tokyo", "region": "Kantō", "country": "Japan"},
-            "95": {"city": "Dallas", "region": "Texas", "country": "United States"},
-            "101": {"city": "Chicago", "region": "Illinois", "country": "United States"},
-            "115": {"city": "Seattle", "region": "Washington", "country": "United States"},
-            "116": {"city": "Los Angeles", "region": "California", "country": "United States"},
-            "34044": {"city": "Bahrain Node", "region": "Manama", "country": "Bahrain"},
+            "26330": {"city": "Warsaw", "region": "Mazovia", "country": "Poland", "status": "Verified"},
+            "21402": {"city": "Tokyo", "region": "Kantō", "country": "Japan", "status": "Verified"},
+            "19823": {"city": "Frankfurt", "region": "Hesse", "country": "Germany", "status": "Verified"},
+            "24110": {"city": "São Paulo", "region": "São Paulo", "country": "Brazil", "status": "Verified"},
+            "18559": {"city": "Sydney", "region": "New South Wales", "country": "Australia", "status": "Verified"},
+            "31204": {"city": "Ashburn", "region": "Virginia", "country": "United States", "status": "Verified"},
+            "26228": {"city": "New York", "region": "New York", "country": "United States", "status": "Verified"},
+            "32": {"city": "New York City", "region": "New York", "country": "United States", "status": "Verified"},
+            "33": {"city": "London", "region": "England", "country": "United Kingdom", "status": "Verified"},
+            "53": {"city": "Ashburn", "region": "Virginia", "country": "United States", "status": "Verified"},
+            "55": {"city": "Tokyo", "region": "Kantō", "country": "Japan", "status": "Verified"},
+            "95": {"city": "Dallas", "region": "Texas", "country": "United States", "status": "Verified"},
+            "101": {"city": "Chicago", "region": "Illinois", "country": "United States", "status": "Verified"},
+            "115": {"city": "Seattle", "region": "Washington", "country": "United States", "status": "Verified"},
+            "116": {"city": "Los Angeles", "region": "California", "country": "United States", "status": "Verified"},
+            "34044": {"city": "Manama", "region": "Capital Governorate", "country": "Bahrain", "status": "Verified"},
         }
 
         if dc_id in known_datacenters:
             node_data = known_datacenters[dc_id]
-            city = node_data["city"]
-            region = node_data["region"]
-            country = node_data["country"]
-            location = f"{city}, {region}, {country}"
-            resolved_ip = f"128.116.{dc_id[-2:] if len(dc_id) >= 2 else dc_id}.33"
+            location = f"{node_data['city']}, {node_data['region']}, {node_data['country']}"
+            status = node_data['status']
+            resolved_ip = "Protected by Roblox Edge Security"
         else:
-            city = f"Node-{dc_id}"
-            region = "Dynamic Subnet Region"
-            country = "Global Edge"
-            location = f"{city}, {region}, {country}"
-            resolved_ip = f"128.116.{dc_id[-2:] if len(dc_id) >= 2 else '00'}.0"
+            location = "Unknown Node Location"
+            status = "Unindexed Datacenter"
+            resolved_ip = "N/A"
 
         embed = discord.Embed(
-            title="🔍 Datacenter IP & Location Resolution",
+            title="🔍 Datacenter Telemetry Resolution",
             description=f"Telemetry verified for node ID `{dc_id}`.",
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
         embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=False)
-        embed.add_field(name="Generated IP Address", value=f"`{resolved_ip}`", inline=False)
         embed.add_field(name="Verified Location", value=f"`{location}`", inline=False)
-        embed.set_footer(text="Enterprise Network Intelligence Matrix")
+        embed.add_field(name="IP Address Status", value=f"`{resolved_ip}`", inline=False)
+        embed.set_footer(text=f"Status: {status} • Enterprise Network Matrix")
         
         await interaction.followup.send(embed=embed, ephemeral=True)
 
         alert_payload = {
             "embeds": [{
-                "title": "🛡️ Datacenter & IP Lookup Event",
+                "title": "🛡️ Datacenter Lookup Event",
                 "description": f"Datacenter ID `{dc_id}` was queried.",
                 "color": 5793287,
                 "fields": [
                     {"name": "Datacenter ID", "value": f"`{dc_id}`", "inline": True},
-                    {"name": "Resolved IP Address", "value": f"`{resolved_ip}`", "inline": True},
                     {"name": "Location", "value": f"`{location}`", "inline": False}
                 ],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -606,6 +611,47 @@ async def checklocation(interaction: discord.Interaction, dc_id: str):
         print(f"[ERROR LOG] Command /checklocation failed: {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to check location: `{e}`", color=0xED4245), ephemeral=True)
 
+@bot.tree.command(name="checkip", description="Lookup real geographical location and ISP data for any valid IP address.")
+@app_commands.describe(ip_address="The public IPv4 address to lookup (e.g., 8.8.8.8)")
+@app_commands.check(has_bot_access)
+async def checkip(interaction: discord.Interaction, ip_address: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    try:
+        api_url = f"http://ip-api.com/json/{ip_address}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(api_url) as resp:
+                if resp.status != 200:
+                    await interaction.followup.send(embed=discord.Embed(title="❌ Error", description="Failed to reach the third-party IP intelligence service.", color=0xED4245), ephemeral=True)
+                    return
+                data = await resp.json()
+
+        if data.get("status") == "fail":
+            reason = data.get("message", "Invalid IP address format.")
+            await interaction.followup.send(embed=discord.Embed(title="❌ Lookup Failed", description=f"Could not resolve IP: `{reason}`", color=0xED4245), ephemeral=True)
+            return
+
+        country = data.get("country", "Unknown")
+        region = data.get("regionName", "Unknown")
+        city = data.get("city", "Unknown")
+        isp = data.get("isp", "Unknown")
+        org = data.get("org", "Unknown")
+
+        embed = discord.Embed(
+            title=f"🌐 Third-Party IP Intelligence Matrix",
+            description=f"Results for target IP: `{ip_address}`",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="📍 Location", value=f"`{city}, {region}, {country}`", inline=False)
+        embed.add_field(name="🏢 ISP / Organization", value=f"`{isp}` / `{org}`", inline=False)
+        embed.set_footer(text="Powered by IP-API Telemetry Feed")
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    except Exception as e:
+        print(f"[ERROR LOG] Command /checkip failed: {e}")
+        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"An error occurred during IP lookup: `{e}`", color=0xED4245), ephemeral=True)
+
 @bot.tree.command(name="checkallservers", description="Check all active Roblox datacenters, verify status, and stream updates.")
 @app_commands.check(has_bot_access)
 async def checkallservers(interaction: discord.Interaction):
@@ -620,8 +666,7 @@ async def checkallservers(interaction: discord.Interaction):
 
         for dc_id, node in TRACKED_NODES.items():
             status = node.get("status", "🟢 Online")
-            resolved_ip = f"128.116.{dc_id[-2:] if len(dc_id) >= 2 else dc_id}.33"
-            field_value = f"• **Location:** `{node['location']}`\n• **ID:** `{node['id']}`\n• **IP:** `{resolved_ip}`\n• **Status:** {status}"
+            field_value = f"• **Location:** `{node['location']}`\n• **ID:** `{node['id']}`\n• **IP Status:** `Masked by Roblox`\n• **Status:** {status}"
             embed.add_field(name=f"📍 {node['city']}", value=field_value, inline=False)
 
         embed.set_footer(text="Live Node Watcher Service • Auto-Sync Enabled")
@@ -793,4 +838,5 @@ async def clear_global(json_interaction: discord.Interaction):
         await json_interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to clear commands: `{e}`", color=0xED4245), ephemeral=True)
 
 if __name__ == "__main__":
+    keep_alive()  # Start the background web server thread
     bot.run(TOKEN)
