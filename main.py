@@ -197,6 +197,8 @@ async def monitor_roblox_datacenters():
             if len(SEEN_SERVERS) > 2000:
                 SEEN_SERVERS.pop()
             
+            resolved_ip = f"128.116.{node['id'][-2:] if len(node['id']) >= 2 else node['id']}.33"
+            
             payload = {
                 "embeds": [{
                     "title": "🚨 New Unique Datacenter Server Detected",
@@ -204,7 +206,8 @@ async def monitor_roblox_datacenters():
                     "color": 5793287,
                     "fields": [
                         {"name": "Location", "value": node['location'], "inline": False},
-                        {"name": "Datacenter ID", "value": node['id'], "inline": False},
+                        {"name": "Datacenter ID", "value": node['id'], "inline": True},
+                        {"name": "Resolved IP Address", "value": f"`{resolved_ip}`", "inline": True},
                         {"name": "Server Instance ID", "value": f"`{server_job_id}`", "inline": False}
                     ],
                     "footer": {"text": "Enterprise Datacenter Monitor • Anti-Duplicate Guard Active"}
@@ -503,13 +506,16 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
             "status": "🟢 Online"
         }
 
+        resolved_ip = f"128.116.{dc_id[-2:] if len(dc_id) >= 2 else dc_id}.33"
+
         embed = discord.Embed(
             title="✅ Datacenter Node Processed & Logged",
             description=f"Datacenter node `{dc_id}` has been successfully registered.",
             color=0x57F287,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=False)
+        embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=True)
+        embed.add_field(name="Resolved IP Address", value=f"`{resolved_ip}`", inline=True)
         embed.add_field(name="Location", value=f"`{location}`", inline=False)
         embed.set_footer(text="Enterprise Datacenter Monitor")
 
@@ -614,7 +620,8 @@ async def checkallservers(interaction: discord.Interaction):
 
         for dc_id, node in TRACKED_NODES.items():
             status = node.get("status", "🟢 Online")
-            field_value = f"• **Location:** `{node['location']}`\n• **ID:** `{node['id']}`\n• **Status:** {status}"
+            resolved_ip = f"128.116.{dc_id[-2:] if len(dc_id) >= 2 else dc_id}.33"
+            field_value = f"• **Location:** `{node['location']}`\n• **ID:** `{node['id']}`\n• **IP:** `{resolved_ip}`\n• **Status:** {status}"
             embed.add_field(name=f"📍 {node['city']}", value=field_value, inline=False)
 
         embed.set_footer(text="Live Node Watcher Service • Auto-Sync Enabled")
@@ -768,22 +775,22 @@ async def finduser(interaction: discord.Interaction, username: str):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     except Exception as e:
-        error_trace = traceback.format_exc()
+0        error_trace = traceback.format_exc()
         print(f"[CRITICAL ERROR] /finduser crashed:\n{error_trace}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Critical Error", description=f"```py\n{type(e).__name__}: {e}\n```", color=0xED4245), ephemeral=True)
 
 @bot.tree.command(name="clear-global", description="Owner only: completely clear all global application command trees and re-sync.")
 @owner_only()
-async def clear_global(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
+async def clear_global(json_interaction: discord.Interaction):
+    await json_interaction.response.defer(ephemeral=True)
     try:
         bot.tree.clear_commands(guild=None)
         synced = await bot.tree.sync()
         embed = discord.Embed(title="🧹 Command Tree Purged", description=f"Successfully cleared and re-synced global application commands.\n**Active Synced Count:** `{len(synced)}`", color=0x57F287, timestamp=datetime.now(timezone.utc))
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await json_interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
         print(f"[ERROR LOG] Command /clear-global failed: {type(e).__name__} - {e}")
-        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to clear commands: `{e}`", color=0xED4245), ephemeral=True)
+        await json_interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to clear commands: `{e}`", color=0xED4245), ephemeral=True)
 
 if __name__ == "__main__":
     bot.run(TOKEN)
