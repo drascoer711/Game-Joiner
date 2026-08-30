@@ -211,10 +211,58 @@ class UnifiedForensicsBot(commands.Bot):
 
 bot = UnifiedForensicsBot()
 
+async def resolve_server_ip_and_region(session, place_id, job_id):
+    """
+    Queries Roblox's join-game endpoint to expose the server's backend IP,
+    then uses geolocation to check if it belongs to a new region/country.
+    """
+    join_url = "https://gamejoin.roblox.com/v1/join-game-instance"
+    payload = {
+        "placeId": place_id,
+        "gameId": job_id
+    }
+    
+    try:
+        headers = {"Origin": "https://www.roblox.com"}
+        async with session.post(join_url, json=payload, headers=headers) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            
+            server_address = data.get("joinScript", {}).get("ClientServerHost")
+            if not server_address:
+                clients = data.get("joinScript", {}).get("MachineAddress")
+                server_address = clients or data.get("serverAddress")
+
+            if not server_address:
+                return None
+
+            clean_ip = server_address.split(":")[0]
+
+            # Check if this IP matches any already tracked nodes
+            known_ips = {node["ip"] for node in TRACKED_NODES.values()}
+            if clean_ip in known_ips:
+                return None  # Skip already tracked hosts completely
+
+            geo_url = f"http://ip-api.com/json/{clean_ip}"
+            async with session.get(geo_url) as geo_resp:
+                if geo_resp.status == 200:
+                    geo_data = await geo_resp.json()
+                    if geo_data.get("status") == "success":
+                        return {
+                            "ip": clean_ip,
+                            "city": geo_data.get("city", "Unknown City"),
+                            "country": geo_data.get("country", "Unknown Country"),
+                            "isp": geo_data.get("isp", "Roblox Infrastructure")
+                        }
+    except Exception as e:
+        print(f"[ERROR LOG] Failed scanning region for job {job_id}: {e}")
+    
+    return None
+
 async def monitor_live_game_servers():
     await bot.wait_until_ready()
-    # Default high-activity target place ID (e.g., Adopt Me or similar popular universe)
-    TARGET_PLACE_ID = "920587237"
+    TARGET_PLACE_ID = 920587237
     
     while not bot.is_closed():
         try:
@@ -232,28 +280,32 @@ async def monitor_live_game_servers():
                             if len(SEEN_SERVERS) > 1500:
                                 SEEN_SERVERS.clear()
                                 
-                            ping = server.get("ping", 0)
-                            playing = server.get("playing", 0)
-                            max_players = server.get("maxPlayers", 0)
-                            
-                            payload = {
-                                "embeds": [{
-                                    "title": "🚨 New Live Game Server Discovered",
-                                    "description": f"Detected a fresh active instance on Place ID `{TARGET_PLACE_ID}`.",
-                                    "color": 5793287,
+                            # Resolve and check if region is new / untracked. If it's already a tracked host, returns None and skips sending.
+                            new_region = await resolve_server_ip_and_region(session, TARGET_PLACE_ID, job_id)
+                            if new_region:
+                                ping = server.get("ping", 0)
+                                playing = server.get("playing", 0)
+                                max_players = server.get("maxPlayers", 0)
+                                
+                                embed = {
+                                    "title": "🚨 New Roblox Country/Region Discovered!",
+                                    "color": 16711680,  # Red
                                     "fields": [
-                                        {"name": "Server Job ID", "value": f"`{job_id}`", "inline": False},
+                                        {"name": "Country", "value": new_region["country"], "inline": True},
+                                        {"name": "City", "value": new_region["city"], "inline": True},
+                                        {"name": "IP Node", "value": f"`{new_region['ip']}`", "inline": False},
+                                        {"name": "ISP / Host", "value": new_region["isp"], "inline": True},
                                         {"name": "Player Load", "value": f"`{playing}/{max_players}`", "inline": True},
                                         {"name": "Node Latency / Ping", "value": f"`{ping} ms`", "inline": True},
+                                        {"name": "Job ID", "value": f"`{job_id}`", "inline": False},
                                         {"name": "Direct Join Link", "value": f"[Join Server](https://www.roblox.com/games/{TARGET_PLACE_ID}?privateServerLinkCode={job_id})", "inline": False}
                                     ],
-                                    "footer": {"text": "Live Instance Radar • Auto-Sync Active"}
-                                }]
-                            }
-                            
-                            async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json=payload) as webhook_resp:
-                                if webhook_resp.status not in (200, 204):
-                                    print(f"[ERROR LOG] Webhook status returned {webhook_resp.status}")
+                                    "footer": {"text": "Live Instance Radar • Region Tracking Active"}
+                                }
+                                
+                                async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json={"embeds": [embed]}) as webhook_resp:
+                                    if webhook_resp.status not in (200, 204):
+                                        print(f"[ERROR LOG] Webhook status returned {webhook_resp.status}")
         except Exception as e:
             print(f"[ERROR LOG] Live server tracker error: {type(e).__name__} - {e}")
         
