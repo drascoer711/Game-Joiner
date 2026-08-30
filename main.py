@@ -499,19 +499,43 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
         print(f"[ERROR LOG] Command /processdc failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to process datacenter node: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="checklocation", description="Check the physical location of any datacenter ID dynamically.")
+@bot.tree.command(name="checklocation", description="Check the physical location of any datacenter ID dynamically via API/telemetry.")
 @app_commands.describe(dc_id="The Datacenter ID to look up")
 @app_commands.check(has_bot_access)
 async def checklocation(interaction: discord.Interaction, dc_id: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
+        city = "Unknown"
+        location = "Unindexed / Dynamic Region"
+
         if dc_id in TRACKED_NODES:
             node_info = TRACKED_NODES[dc_id]
             city = node_info.get('city', 'Unknown')
             location = node_info.get('location', 'Unknown')
         else:
-            city = f"Node-{dc_id}"
-            location = f"Unindexed / Dynamic Region (ID: {dc_id})"
+            async with aiohttp.ClientSession() as session:
+                try:
+                    async with session.get(f"https://ipapi.co/{dc_id}/json/", timeout=5) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            city = data.get("city", f"Node-{dc_id}")
+                            region = data.get("region", "")
+                            country = data.get("country_name", "")
+                            location = f"{city}, {region}, {country}".strip(", ") if city or country else f"Region ID: {dc_id}"
+                        else:
+                            city = f"Node-{dc_id}"
+                            location = f"Dynamic Region (ID: {dc_id})"
+                except Exception:
+                    city = f"Node-{dc_id}"
+                    location = f"Dynamic / Auto-Resolved (ID: {dc_id})"
+
+            # Cache automatically so future lookups are instant
+            TRACKED_NODES[dc_id] = {
+                "city": city,
+                "location": location,
+                "id": dc_id,
+                "status": "🟢 Online"
+            }
 
         embed = discord.Embed(
             title="🔍 Datacenter Location Lookup",
@@ -522,7 +546,7 @@ async def checklocation(interaction: discord.Interaction, dc_id: str):
         embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=False)
         embed.add_field(name="City / Node", value=f"`{city}`", inline=False)
         embed.add_field(name="Resolved Location", value=f"`{location}`", inline=False)
-        embed.set_footer(text="Dynamic Network Intelligence")
+        embed.set_footer(text="Dynamic Network Intelligence API")
         
         await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
