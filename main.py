@@ -839,16 +839,16 @@ async def finduser(interaction: discord.Interaction, username: str):
 
 @bot.tree.command(name="clear-global", description="Owner only: completely clear all global application command trees and re-sync.")
 @owner_only()
-async def clear_global(json_interaction: discord.Interaction):
-    await json_interaction.response.defer(ephemeral=True)
+async def clear_global(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     try:
         bot.tree.clear_commands(guild=None)
         synced = await bot.tree.sync()
         embed = discord.Embed(title="🧹 Command Tree Purged", description=f"Successfully cleared and re-synced global application commands.\n**Active Synced Count:** `{len(synced)}`", color=0x57F287, timestamp=datetime.now(timezone.utc))
-        await json_interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
         print(f"[ERROR LOG] Command /clear-global failed: {type(e).__name__} - {e}")
-        await json_interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to clear commands: `{e}`", color=0xED4245), ephemeral=True)
+        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to clear commands: `{e}`", color=0xED4245), ephemeral=True)
 
 if __name__ == "__main__":
     keep_alive()  # Start the background web server thread
