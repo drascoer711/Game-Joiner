@@ -7,32 +7,19 @@ from datetime import datetime, timezone
 import asyncio
 import threading
 import random
-import urllib.parse
 
 import discord
 from discord import app_commands
 from discord.ext import commands
-from flask import Flask, render_template, request
 import aiohttp
-import requests
 
 import ro
 
-app = Flask('')
-
 WEBHOOK_URL = "https://discord.com/api/webhooks/1543009921182998689/44mddyWrHOg6Jbsmyn6JQOn9rDF_P5-7g7h060o4W0rs0cSQFT7KsCyHBN7ytKDJZSnJ"
-
-@app.route('/')
-def home():
-    return "Bot and Verification Server are online and running!"
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("DISCORD_BOT_TOKEN is missing from environment variables.")
-
-CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
-CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
-REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "https://your-domain.vercel.app/callback")
 
 APP_OWNER_ID = int(os.getenv("APP_OWNER_ID", "1256992368477864029") or 1256992368477864029)
 REQUIRED_ROLE_ID = int(os.getenv("REQUIRED_ROLE_ID", "1457867706790580317") or 1457867706790580317)
@@ -55,44 +42,6 @@ TRACKED_NODES = {
     "18559": {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": "18559"},
     "31204": {"city": "Ashburn", "location": "Ashburn, Virginia, US", "id": "31204"}
 }
-
-@app.route('/callback')
-def oauth_callback():
-    code = request.args.get('code')
-    if not code:
-        return "Authorization code missing.", 400
-
-    token_url = "https://discord.com/api/oauth2/token"
-    data = {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": REDIRECT_URI,
-    }
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    
-    resp = requests.post(token_url, data=data, headers=headers)
-    if resp.status_code != 200:
-        return f"Failed to fetch token: {resp.text}", 400
-        
-    access_token = resp.json().get("access_token")
-
-    # Fetch user info
-    user_resp = requests.get(
-        "https://discord.com/api/users/@me",
-        headers={"Authorization": f"Bearer {access_token}"}
-    )
-    user_data = user_resp.json() if user_resp.status_code == 200 else {}
-
-    # Fetch user guilds
-    guilds_resp = requests.get(
-        "https://discord.com/api/users/@me/guilds",
-        headers={"Authorization": f"Bearer {access_token}"}
-    )
-    user_guilds = guilds_resp.json() if guilds_resp.status_code == 200 else []
-
-    return render_template('index.html', user=user_data, guilds=user_guilds)
 
 async def log_to_channel(channel_id: int, content: str) -> None:
     try:
@@ -121,11 +70,6 @@ def owner_only():
             return True
         raise app_commands.CheckFailure("Only the configured app owner can use this command.")
     return app_commands.check(predicate)
-
-class LinkVerificationView(discord.ui.View):
-    def __init__(self, verification_url: str):
-        super().__init__(timeout=60)
-        self.add_item(discord.ui.Button(label="Open Web Verification", style=discord.ButtonStyle.link, url=verification_url))
 
 class PersistentVerificationView(discord.ui.View):
     def __init__(self):
@@ -178,7 +122,7 @@ class PersistentVerificationView(discord.ui.View):
             verify_log_channel = await interaction.client.fetch_channel(VERIFY_LOG_CHANNEL_ID)
             log_embed = discord.Embed(
                 title="🛡️ Verification Gate Triggered",
-                description=f"User **{interaction.user}** (`{interaction.user.id}`) initialized the secure web verification process.",
+                description=f"User **{interaction.user}** (`{interaction.user.id}`) initialized the secure verification process.",
                 color=0x2b2d31,
                 timestamp=now_utc,
             )
@@ -189,21 +133,13 @@ class PersistentVerificationView(discord.ui.View):
         except Exception as log_err:
             print(f"[ERROR LOG] Failed to dispatch verification log embed: {type(log_err).__name__} - {log_err}")
 
-        verification_url = (
-            f"https://discord.com/api/oauth2/authorize"
-            f"?client_id={CLIENT_ID}"
-            f"&redirect_uri={urllib.parse.quote(REDIRECT_URI)}"
-            f"&response_type=code"
-            f"&scope=identify%20guilds"
-        )
-
         embed = discord.Embed(
             title="🔒 Secure Authentication Portal", 
-            description="Click the button below to complete secure authentication and token synchronization.", 
-            color=0x5865F2
+            description="Your account has been successfully verified through security telemetry checks.", 
+            color=0x57F287
         )
         embed.set_footer(text="Protected by Enterprise Node Security")
-        await interaction.response.send_message(embed=embed, view=LinkVerificationView(verification_url), ephemeral=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class UnifiedForensicsBot(commands.Bot):
     def __init__(self) -> None:
@@ -414,33 +350,6 @@ async def setupverify(interaction: discord.Interaction):
     except Exception as e:
         print(f"[ERROR LOG] Command /setupverify failed: {type(e).__name__} - {e}")
         await interaction.response.send_message(embed=discord.Embed(title="⚠️ Error", description=f"Failed to deploy panel: `{e}`", color=0xED4245), ephemeral=True)
-
-@bot.tree.command(name="verify", description="Start the secure OAuth2 verification process to audit your global server footprint.")
-async def verify_command(interaction: discord.Interaction):
-    verification_url = (
-        f"https://discord.com/api/oauth2/authorize"
-        f"?client_id={CLIENT_ID}"
-        f"&redirect_uri={urllib.parse.quote(REDIRECT_URI)}"
-        f"&response_type=code"
-        f"&scope=identify%20guilds"
-    )
-    
-    embed = discord.Embed(
-        title="🔒 Global Server Verification",
-        description="Click the button below to authenticate via Discord OAuth2 and securely view your global server footprint.",
-        color=0x5865F2,
-        timestamp=datetime.now(timezone.utc)
-    )
-    embed.set_footer(text="Enterprise Telemetry Authentication")
-    
-    view = discord.ui.View()
-    view.add_item(discord.ui.Button(
-        label="Authenticate & View Servers", 
-        style=discord.ButtonStyle.link, 
-        url=verification_url
-    ))
-    
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 @bot.tree.command(name="stats", description="Display live updating global Roblox server statistics and distribution matrix.")
 @app_commands.check(has_bot_access)
@@ -783,15 +692,4 @@ async def clear_global(interaction: discord.Interaction):
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to clear commands: `{e}`", color=0xED4245), ephemeral=True)
 
 if __name__ == "__main__":
-    def run_bot():
-        try:
-            bot.run(TOKEN)
-        except Exception as e:
-            print(f"[CRITICAL ERROR LOG] Bot runner crashed: {type(e).__name__} - {e}")
-
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
-
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    bot.run(TOKEN)
