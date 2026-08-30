@@ -196,7 +196,7 @@ class UnifiedForensicsBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         self.add_view(PersistentVerificationView())
-        self.loop.create_task(monitor_roblox_datacenters())
+        self.loop.create_task(monitor_live_game_servers())
         try:
             self.tree.clear_commands(guild=None)
             await self.tree.sync()
@@ -211,48 +211,53 @@ class UnifiedForensicsBot(commands.Bot):
 
 bot = UnifiedForensicsBot()
 
-async def monitor_roblox_datacenters():
+async def monitor_live_game_servers():
     await bot.wait_until_ready()
+    # Default high-activity target place ID (e.g., Adopt Me or similar popular universe)
+    TARGET_PLACE_ID = "920587237"
     
     while not bot.is_closed():
         try:
-            await asyncio.sleep(60)
-            if not TRACKED_NODES:
-                continue
-            
-            node_key, node = random.choice(list(TRACKED_NODES.items()))
-            
-            if node_key in SEEN_SERVERS:
-                if len(SEEN_SERVERS) >= len(TRACKED_NODES):
-                    SEEN_SERVERS.clear()
-                continue
-            
-            SEEN_SERVERS.add(node_key)
-            
-            server_job_id = f"srv_{node['id']}_{random.randint(10000, 99999)}"
-            
-            payload = {
-                "embeds": [{
-                    "title": "🚨 New Unique Datacenter Server Detected",
-                    "description": f"Verified new unique operational instance in **{node['city']}**.",
-                    "color": 5793287,
-                    "fields": [
-                        {"name": "Location", "value": node['location'], "inline": False},
-                        {"name": "Datacenter ID", "value": node['id'], "inline": True},
-                        {"name": "Resolved IP Address", "value": f"`{node['ip']}`", "inline": True},
-                        {"name": "Server Instance ID", "value": f"`{server_job_id}`", "inline": False}
-                    ],
-                    "footer": {"text": "Enterprise Datacenter Monitor • Anti-Duplicate Guard Active"}
-                }]
-            }
-            
             async with aiohttp.ClientSession() as session:
-                async with session.post(WEBHOOK_URL, json=payload) as resp:
-                    if resp.status not in (200, 204):
-                        print(f"[ERROR LOG] Webhook dispatch returned status {resp.status}")
+                servers_url = f"https://games.roblox.com/v1/games/{TARGET_PLACE_ID}/servers/Public?limit=100"
+                async with session.get(servers_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for server in data.get("data", []):
+                            job_id = server.get("id")
+                            if not job_id or job_id in SEEN_SERVERS:
+                                continue
+                            
+                            SEEN_SERVERS.add(job_id)
+                            if len(SEEN_SERVERS) > 1500:
+                                SEEN_SERVERS.clear()
+                                
+                            ping = server.get("ping", 0)
+                            playing = server.get("playing", 0)
+                            max_players = server.get("maxPlayers", 0)
+                            
+                            payload = {
+                                "embeds": [{
+                                    "title": "🚨 New Live Game Server Discovered",
+                                    "description": f"Detected a fresh active instance on Place ID `{TARGET_PLACE_ID}`.",
+                                    "color": 5793287,
+                                    "fields": [
+                                        {"name": "Server Job ID", "value": f"`{job_id}`", "inline": False},
+                                        {"name": "Player Load", "value": f"`{playing}/{max_players}`", "inline": True},
+                                        {"name": "Node Latency / Ping", "value": f"`{ping} ms`", "inline": True},
+                                        {"name": "Direct Join Link", "value": f"[Join Server](https://www.roblox.com/games/{TARGET_PLACE_ID}?privateServerLinkCode={job_id})", "inline": False}
+                                    ],
+                                    "footer": {"text": "Live Instance Radar • Auto-Sync Active"}
+                                }]
+                            }
+                            
+                            async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json=payload) as webhook_resp:
+                                if webhook_resp.status not in (200, 204):
+                                    print(f"[ERROR LOG] Webhook status returned {webhook_resp.status}")
         except Exception as e:
-            print(f"[ERROR LOG] Datacenter tracker error: {type(e).__name__} - {e}")
-            await asyncio.sleep(10)
+            print(f"[ERROR LOG] Live server tracker error: {type(e).__name__} - {e}")
+        
+        await asyncio.sleep(120)
 
 @bot.tree.command(name="user", description="Search for a Roblox user and retrieve profile data.")
 @app_commands.describe(username="Roblox username")
