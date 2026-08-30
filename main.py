@@ -73,6 +73,20 @@ def owner_only():
         raise app_commands.CheckFailure("Only the configured app owner can use this command.")
     return app_commands.check(predicate)
 
+class GuildOnlyCommandTree(app_commands.CommandTree):
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="🚫 Restricted Access", 
+                    description="This command can only be used inside Discord servers, not in direct messages.", 
+                    color=0xED4245
+                ), 
+                ephemeral=True
+            )
+            return False
+        return True
+
 class PersistentVerificationView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -145,12 +159,13 @@ class PersistentVerificationView(discord.ui.View):
 
 class UnifiedForensicsBot(commands.Bot):
     def __init__(self) -> None:
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents, tree_cls=GuildOnlyCommandTree)
 
     async def setup_hook(self) -> None:
         self.add_view(PersistentVerificationView())
         self.loop.create_task(monitor_roblox_datacenters())
         try:
+            self.tree.clear_commands(guild=None)
             await self.tree.sync()
             asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, "⚙️ Successfully synced application command tree globally across all servers."))
         except Exception as e:
