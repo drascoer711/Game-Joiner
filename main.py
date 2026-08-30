@@ -533,9 +533,13 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
         payload = {
             "embeds": [embed.to_dict()]
         }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json=payload) as resp:
-                pass
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json=payload) as resp:
+                    pass
+        except Exception as webhook_err:
+            print(f"[ERROR LOG] Failed to post processdc webhook: {webhook_err}")
 
         await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
