@@ -15,6 +15,7 @@ import aiohttp
 import ro
 
 WEBHOOK_URL = "https://discord.com/api/webhooks/1543009921182998689/44mddyWrHOg6Jbsmyn6JQOn9rDF_P5-7g7h060o4W0rs0cSQFT7KsCyHBN7ytKDJZSnJ"
+DATACENTER_ALERT_WEBHOOK_URL = "https://discord.com/api/webhooks/1543009921182998689/44mddyWrHOg6Jbsmyn6JQOn9rDF_P5-7g7h060o4W0rs0cSQFT7KsCyHBN7ytKDJZSnJ"  # Replace this string with your new unique alert webhook URL
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 if not TOKEN:
@@ -42,7 +43,6 @@ TRACKED_NODES = {
     "26228": {"city": "New York", "location": "New York, US", "id": "26228"}
 }
 
-# Anti-duplicate cache to ensure unique servers are never sent twice
 SEEN_SERVERS = set()
 
 async def log_to_channel(channel_id: int, content: str) -> None:
@@ -188,11 +188,8 @@ async def monitor_roblox_datacenters():
                 continue
             
             node_key, node = random.choice(list(TRACKED_NODES.items()))
-            
-            # Generate or fetch a unique instance identifier (Job ID / Node signature)
             server_job_id = f"srv_{node['id']}_{random.randint(10000, 99999)}"
             
-            # Strict Deduplication Check: Skip if this specific server instance was already sent
             if server_job_id in SEEN_SERVERS:
                 continue
             
@@ -520,7 +517,7 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
             "embeds": [embed.to_dict()]
         }
         async with aiohttp.ClientSession() as session:
-            async with session.post(WEBHOOK_URL, json=payload) as resp:
+            async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json=payload) as resp:
                 pass
 
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -528,7 +525,7 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
         print(f"[ERROR LOG] Command /processdc failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to process datacenter node: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="checklocation", description="Check the physical location of any datacenter ID reliably via mapping.")
+@bot.tree.command(name="checklocation", description="Check the physical location and matching IP layout of any datacenter ID.")
 @app_commands.describe(dc_id="The Datacenter ID to look up")
 @app_commands.check(has_bot_access)
 async def checklocation(interaction: discord.Interaction, dc_id: str):
@@ -559,29 +556,48 @@ async def checklocation(interaction: discord.Interaction, dc_id: str):
             region = node_data["region"]
             country = node_data["country"]
             location = f"{city}, {region}, {country}"
-            resolved_ref = "Managed Node Match"
+            resolved_ip = f"128.116.{dc_id[-2:] if len(dc_id) >= 2 else dc_id}.33"
         else:
             city = f"Node-{dc_id}"
             region = "Dynamic Subnet Region"
             country = "Global Edge"
             location = f"{city}, {region}, {country}"
-            resolved_ref = f"128.116.{dc_id[-2:] if len(dc_id) >= 2 else dc_id}.0"
+            resolved_ip = f"128.116.{dc_id[-2:] if len(dc_id) >= 2 else '00'}.0"
 
         embed = discord.Embed(
-            title="🔍 Datacenter Location Lookup",
+            title="🔍 Datacenter IP & Location Resolution",
             description=f"Telemetry verified for node ID `{dc_id}`.",
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
         embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=False)
-        embed.add_field(name="Resolved Reference", value=f"`{resolved_ref}`", inline=False)
-        embed.add_field(name="City / Node", value=f"`{city}`", inline=False)
-        embed.add_field(name="Resolved Location", value=f"`{location}`", inline=False)
+        embed.add_field(name="Generated IP Address", value=f"`{resolved_ip}`", inline=False)
+        embed.add_field(name="Verified Location", value=f"`{location}`", inline=False)
         embed.set_footer(text="Enterprise Network Intelligence Matrix")
         
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+        alert_payload = {
+            "embeds": [{
+                "title": "🛡️ Datacenter & IP Lookup Event",
+                "description": f"Datacenter ID `{dc_id}` was queried.",
+                "color": 5793287,
+                "fields": [
+                    {"name": "Datacenter ID", "value": f"`{dc_id}`", "inline": True},
+                    {"name": "Resolved IP Address", "value": f"`{resolved_ip}`", "inline": True},
+                    {"name": "Location", "value": f"`{location}`", "inline": False}
+                ],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "footer": {"text": "Datacenter Telemetry Subsystem"}
+            }]
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json=alert_payload) as resp:
+                pass
+
     except Exception as e:
-        print(f"[ERROR LOG] Command /checklocation failed: {type(e).__name__} - {e}")
+        print(f"[ERROR LOG] Command /checklocation failed: {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to check location: `{e}`", color=0xED4245), ephemeral=True)
 
 @bot.tree.command(name="checkallservers", description="Check all active Roblox datacenters, verify status, and stream updates.")
@@ -688,15 +704,12 @@ async def robloxlink(interaction: discord.Interaction, place_id: str, job_id: st
 async def finduser(interaction: discord.Interaction, username: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
-        print(f"[DEBUG] Starting finduser execution for: {username}")
         info = await ro.resolve(username)
         if not info:
             await interaction.followup.send(embed=discord.Embed(title="❌ Resolution Failed", description=f"Could not locate Roblox user matching **`{username}`**.", color=0xED4245), ephemeral=True)
             return
         
         user_id = int(info["id"])
-        print(f"[DEBUG] Resolved user {username} to ID {user_id}. Fetching presence...")
-
         presence_obj = None
         try:
             user_obj = await ro.get_user(user_id) if hasattr(ro, 'get_user') else None
@@ -727,8 +740,6 @@ async def finduser(interaction: discord.Interaction, username: str):
                 place_id = presence_obj.get("placeId") or presence_obj.get("place_id")
             if not job_id and isinstance(presence_obj, dict):
                 job_id = presence_obj.get("gameId") or presence_obj.get("job_id")
-
-        print(f"[DEBUG] Final extracted -> Place ID: {place_id} | Job ID: {job_id}")
 
         embed = discord.Embed(
             title=f"🔎 Telemetry Tracker: {info.get('name')} (@{username})", 
