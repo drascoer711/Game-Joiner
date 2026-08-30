@@ -203,14 +203,16 @@ async def monitor_roblox_datacenters():
                 continue
             
             node_key, node = random.choice(list(TRACKED_NODES.items()))
-            server_job_id = f"srv_{node['id']}_{random.randint(10000, 99999)}"
             
-            if server_job_id in SEEN_SERVERS:
+            # Check if we already alerted for this Datacenter ID to prevent spam/duplicates
+            if node_key in SEEN_SERVERS:
                 continue
             
-            SEEN_SERVERS.add(server_job_id)
+            SEEN_SERVERS.add(node_key)
             if len(SEEN_SERVERS) > 2000:
-                SEEN_SERVERS.pop()
+                SEEN_SERVERS.clear()
+            
+            server_job_id = f"srv_{node['id']}_{random.randint(10000, 99999)}"
             
             payload = {
                 "embeds": [{
