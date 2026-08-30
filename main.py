@@ -499,51 +499,41 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
         print(f"[ERROR LOG] Command /processdc failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to process datacenter node: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="checklocation", description="Check the physical location of any datacenter ID dynamically via API/telemetry.")
-@app_commands.describe(dc_id="The Datacenter ID to look up")
+@bot.tree.command(name="checklocation", description="Check the physical location of any IP address dynamically via API.")
+@app_commands.describe(ip_address="The server IP address to look up")
 @app_commands.check(has_bot_access)
-async def checklocation(interaction: discord.Interaction, dc_id: str):
+async def checklocation(interaction: discord.Interaction, ip_address: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
         city = "Unknown"
         location = "Unindexed / Dynamic Region"
 
-        if dc_id in TRACKED_NODES:
-            node_info = TRACKED_NODES[dc_id]
-            city = node_info.get('city', 'Unknown')
-            location = node_info.get('location', 'Unknown')
-        else:
-            async with aiohttp.ClientSession() as session:
-                try:
-                    async with session.get(f"https://ipapi.co/{dc_id}/json/", timeout=5) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            city = data.get("city", f"Node-{dc_id}")
-                            region = data.get("region", "")
-                            country = data.get("country_name", "")
-                            location = f"{city}, {region}, {country}".strip(", ") if city or country else f"Region ID: {dc_id}"
-                        else:
-                            city = f"Node-{dc_id}"
-                            location = f"Dynamic Region (ID: {dc_id})"
-                except Exception:
-                    city = f"Node-{dc_id}"
-                    location = f"Dynamic / Auto-Resolved (ID: {dc_id})"
-
-            # Cache automatically so future lookups are instant
-            TRACKED_NODES[dc_id] = {
-                "city": city,
-                "location": location,
-                "id": dc_id,
-                "status": "🟢 Online"
-            }
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(f"https://ipapi.co/{ip_address}/json/", timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        city = data.get("city", "Unknown")
+                        region = data.get("region", "")
+                        country = data.get("country_name", "")
+                        location = f"{city}, {region}, {country}".strip(", ")
+                        if not city and not country:
+                            city = f"IP-{ip_address}"
+                            location = f"Dynamic Region (IP: {ip_address})"
+                    else:
+                        city = f"IP-{ip_address}"
+                        location = f"Lookup Failed (Status: {resp.status})"
+            except Exception:
+                city = f"IP-{ip_address}"
+                location = "API Connection Timeout / Error"
 
         embed = discord.Embed(
-            title="🔍 Datacenter Location Lookup",
-            description=f"Telemetry data for node ID `{dc_id}`.",
+            title="🔍 IP Datacenter Location Lookup",
+            description=f"Telemetry data for IP address `{ip_address}`.",
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="Datacenter ID", value=f"`{dc_id}`", inline=False)
+        embed.add_field(name="Target IP", value=f"`{ip_address}`", inline=False)
         embed.add_field(name="City / Node", value=f"`{city}`", inline=False)
         embed.add_field(name="Resolved Location", value=f"`{location}`", inline=False)
         embed.set_footer(text="Dynamic Network Intelligence API")
