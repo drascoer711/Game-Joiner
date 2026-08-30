@@ -49,13 +49,31 @@ intents.message_content = True
 intents.members = True
 
 TRACKED_NODES = {
-    "26330": {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": "26330", "ip": "159.203.88.10"},
-    "21402": {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": "21402", "ip": "139.162.112.45"},
-    "19823": {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": "19823", "ip": "139.59.130.22"},
-    "24110": {"city": "São Paulo", "location": "São Paulo, BR", "id": "24110", "ip": "177.54.144.12"},
-    "18559": {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": "18559", "ip": "139.162.24.11"},
+    # North America
     "31204": {"city": "Ashburn", "location": "Ashburn, Virginia, US", "id": "31204", "ip": "45.79.19.102"},
-    "26228": {"city": "New York", "location": "New York, US", "id": "26228", "ip": "172.105.99.14"}
+    "53": {"city": "Ashburn", "location": "Ashburn, Virginia, US", "id": "53", "ip": "45.33.18.2"},
+    "101": {"city": "Chicago", "location": "Chicago, Illinois, US", "id": "101", "ip": "192.155.85.2"},
+    "95": {"city": "Dallas", "location": "Dallas, Texas, US", "id": "95", "ip": "45.79.4.11"},
+    "116": {"city": "Los Angeles", "location": "Los Angeles, California, US", "id": "116", "ip": "45.79.8.19"},
+    "26228": {"city": "New York", "location": "New York, US", "id": "26228", "ip": "172.105.99.14"},
+    "32": {"city": "New York City", "location": "New York City, New York, US", "id": "32", "ip": "172.104.2.19"},
+    "115": {"city": "Seattle", "location": "Seattle, Washington, US", "id": "115", "ip": "198.58.100.4"},
+    "24110": {"city": "São Paulo", "location": "São Paulo, BR", "id": "24110", "ip": "177.54.144.12"},
+    
+    # Europe
+    "213": {"city": "Amsterdam", "location": "Amsterdam, North Holland, NL", "id": "213", "ip": "178.128.150.18"},
+    "19823": {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": "19823", "ip": "139.59.130.22"},
+    "214": {"city": "Frankfurt", "location": "Frankfurt, Hesse, DE", "id": "214", "ip": "139.59.150.90"},
+    "33": {"city": "London", "location": "London, England, GB", "id": "33", "ip": "178.62.204.5"},
+    "212": {"city": "Paris", "location": "Paris, Île-de-France, FR", "id": "212", "ip": "159.65.120.44"},
+    "26330": {"city": "Warsaw", "location": "Warsaw, Mazovia, PL", "id": "26330", "ip": "159.203.88.10"},
+
+    # Asia-Pacific & Middle East
+    "34044": {"city": "Manama", "location": "Manama, Capital Governorate, BH", "id": "34044", "ip": "139.59.99.11"},
+    "211": {"city": "Singapore", "location": "Singapore, SG", "id": "211", "ip": "139.59.230.15"},
+    "18559": {"city": "Sydney", "location": "Sydney, New South Wales, AU", "id": "18559", "ip": "139.162.24.11"},
+    "21402": {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": "21402", "ip": "139.162.112.45"},
+    "55": {"city": "Tokyo", "location": "Tokyo, Kantō, JP", "id": "55", "ip": "172.104.90.1"}
 }
 
 SEEN_SERVERS = set()
@@ -535,7 +553,6 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
             "embeds": [embed.to_dict()]
         }
 
-        # Safely post webhook without blocking or calling undefined functions
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json=payload) as resp:
@@ -571,6 +588,10 @@ async def checklocation(interaction: discord.Interaction, dc_id: str):
             "115": {"city": "Seattle", "region": "Washington", "country": "United States", "status": "Verified", "ip": "198.58.100.4"},
             "116": {"city": "Los Angeles", "region": "California", "country": "United States", "status": "Verified", "ip": "45.79.8.19"},
             "34044": {"city": "Manama", "region": "Capital Governorate", "country": "Bahrain", "status": "Verified", "ip": "139.59.99.11"},
+            "211": {"city": "Singapore", "region": "Singapore", "country": "Singapore", "status": "Verified", "ip": "139.59.230.15"},
+            "212": {"city": "Paris", "region": "Île-de-France", "country": "France", "status": "Verified", "ip": "159.65.120.44"},
+            "213": {"city": "Amsterdam", "region": "North Holland", "country": "Netherlands", "status": "Verified", "ip": "178.128.150.18"},
+            "214": {"city": "Frankfurt", "region": "Hesse", "country": "Germany", "status": "Verified", "ip": "139.59.150.90"}
         }
 
         if dc_id in known_datacenters:
