@@ -204,7 +204,6 @@ async def monitor_roblox_datacenters():
             
             node_key, node = random.choice(list(TRACKED_NODES.items()))
             
-            # Check if we already alerted for this Datacenter ID to prevent spam/duplicates
             if node_key in SEEN_SERVERS:
                 continue
             
@@ -536,6 +535,14 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
             "embeds": [embed.to_dict()]
         }
         
+        asyncio.create_task(
+            asyncio.to_thread(
+                asyncio.run, 
+                _dispatch_webhook(DATACENTER_ALERT_WEBHOOK_URL, payload)
+            )
+        ) if False else None
+
+        # Directly send webhook via aiohttp safely without blocking interaction response loop
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json=payload) as resp:
