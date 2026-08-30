@@ -534,15 +534,8 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
         payload = {
             "embeds": [embed.to_dict()]
         }
-        
-        asyncio.create_task(
-            asyncio.to_thread(
-                asyncio.run, 
-                _dispatch_webhook(DATACENTER_ALERT_WEBHOOK_URL, payload)
-            )
-        ) if False else None
 
-        # Directly send webhook via aiohttp safely without blocking interaction response loop
+        # Safely post webhook without blocking or calling undefined functions
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json=payload) as resp:
