@@ -775,7 +775,7 @@ async def finduser(interaction: discord.Interaction, username: str):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     except Exception as e:
-0        error_trace = traceback.format_exc()
+        error_trace = traceback.format_exc()
         print(f"[CRITICAL ERROR] /finduser crashed:\n{error_trace}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Critical Error", description=f"```py\n{type(e).__name__}: {e}\n```", color=0xED4245), ephemeral=True)
 
