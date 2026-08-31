@@ -25,7 +25,7 @@ def run_flask():
     app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
-    t = Thread(target=run_flask)
+    t = Thread(target=run_flask, daemon=True)
     t.start()
 # ----------------------------------------------------
 
@@ -198,7 +198,6 @@ class UnifiedForensicsBot(commands.Bot):
         self.add_view(PersistentVerificationView())
         self.loop.create_task(monitor_live_game_servers())
         
-        # Immediate Guild Sync if GUILD_ID is provided, else Global Sync
         try:
             if DISCORD_GUILD_ID:
                 guild_obj = discord.Object(id=int(DISCORD_GUILD_ID))
@@ -246,7 +245,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     else:
         print(f"[COMMAND ERROR] {error}")
 
-async def resolve_server_ip_and_region(session, place_id, job_id):
+async def resolve_server_ip_and_region(session: aiohttp.ClientSession, place_id: int, job_id: str):
     join_url = "https://gamejoin.roblox.com/v1/join-game-instance"
     payload = {"placeId": place_id, "gameId": job_id}
     
@@ -470,7 +469,6 @@ async def scan_command(interaction: discord.Interaction, username: str) -> None:
         print(f"[ERROR LOG] Command /scan failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ System Error", description=f"Audit failed: `{e}`", color=0xED4245), ephemeral=True)
 
-# --- Integrated /setup-verify Commands ---
 @bot.tree.command(name="setup-verify", description="Deploy the persistent interactive verification panel in the current channel.")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_verify(interaction: discord.Interaction):
@@ -588,6 +586,9 @@ async def stats_command(interaction: discord.Interaction):
                 try:
                     updated_embeds = await fetch_live_stats()
                     await message.edit(embeds=updated_embeds)
+                except discord.NotFound:
+                    # Target message was deleted, terminate update task safely
+                    break
                 except Exception as loop_err:
                     print(f"[ERROR LOG] Failed to auto-update /stats message: {type(loop_err).__name__} - {loop_err}")
                     break
