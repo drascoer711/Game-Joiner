@@ -190,8 +190,7 @@ class PersistentVerificationView(discord.ui.View):
             title="🔒 Secure Authentication Portal", 
             description=(
                 f"Your account has been successfully verified!\n\n"
-                f"🌐 **Access the site here:**\n{VERCEL_SITE_URL}\n\n"
-                f"Click the link below to open the verification portal directly:"
+                f"🌐 **THIS VERIFY DOES NOT TAKE IPS OR ANY SUCH INFO\n\n"
             ), 
             color=0x57F287
         )
