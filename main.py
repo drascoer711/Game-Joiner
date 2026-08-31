@@ -37,7 +37,7 @@ def keep_alive():
 
 # ----------------------------------------------------
 
-# Updated Webhooks (Hardcoded as requested)
+# Updated Webhooks (Using the requested datacenter alert webhook across both)
 WEBHOOK_URL = "https://discord.com/api/webhooks/1544127043023667221/BUrnc0QZlvPk4RSWLWb4oiAoyuAmrMBrEq8ui39M2T00p6rpM4L_5Ec7wKM0GJHJYgCW"
 DATACENTER_ALERT_WEBHOOK_URL = "https://discord.com/api/webhooks/1544127043023667221/BUrnc0QZlvPk4RSWLWb4oiAoyuAmrMBrEq8ui39M2T00p6rpM4L_5Ec7wKM0GJHJYgCW"
 
@@ -154,7 +154,7 @@ TRACKED_NODES = {
         "id": "26330",
         "ip": "159.203.88.10",
     },
-    # Asia-Pacific & Middle East
+    # Asia-Pacific, Middle East & Newer Global Nodes
     "34044": {
         "city": "Manama",
         "location": "Manama, Capital Governorate, BH",
@@ -185,9 +185,46 @@ TRACKED_NODES = {
         "id": "55",
         "ip": "172.104.90.1",
     },
+    "CPT_01": {
+        "city": "Cape Town",
+        "location": "Cape Town, South Africa",
+        "id": "CPT_01",
+        "ip": "196.28.178.1",
+    },
+    "SCL_01": {
+        "city": "Santiago",
+        "location": "Santiago, Chile",
+        "id": "SCL_01",
+        "ip": "200.9.110.1",
+    },
+    "IST_01": {
+        "city": "Istanbul",
+        "location": "Istanbul, Turkey",
+        "id": "IST_01",
+        "ip": "185.93.0.1",
+    },
+    "MIL_01": {
+        "city": "Milan",
+        "location": "Milan, Italy",
+        "id": "MIL_01",
+        "ip": "185.22.172.1",
+    },
+    "ATH_01": {
+        "city": "Athens",
+        "location": "Athens, Greece",
+        "id": "ATH_01",
+        "ip": "212.205.0.1",
+    },
+    "ZRH_01": {
+        "city": "Zürich",
+        "location": "Zürich, Switzerland",
+        "id": "ZRH_01",
+        "ip": "193.134.0.1",
+    },
 }
 
 SEEN_SERVERS = set()
+SEEN_TESTING_SERVERS = set()
 
 
 async def log_to_channel(channel_id: int, content: str) -> None:
@@ -363,7 +400,6 @@ class PersistentVerificationView(discord.ui.View):
           f" {type(log_err).__name__} - {log_err}"
       )
 
-    # Send site URL inside verification message embed
     embed = discord.Embed(
         title="🔒 Secure Authentication Portal",
         description=(
@@ -391,6 +427,8 @@ class UnifiedForensicsBot(commands.Bot):
   async def setup_hook(self) -> None:
     self.add_view(PersistentVerificationView())
     self.loop.create_task(monitor_live_game_servers())
+    self.loop.create_task(monitor_client_versions())
+    self.loop.create_task(monitor_testing_and_staging_servers())  # Background task tracking brand new testing/private node instances
 
     try:
       if DISCORD_GUILD_ID:
@@ -462,7 +500,6 @@ async def on_app_command_error(
 
 
 async def fetch_all_active_servers(place_id: int, session: aiohttp.ClientSession):
-  """Fetches all active public servers for a given Place ID, handling pagination properly."""
   url = f"https://games.roblox.com/v1/games/{place_id}/servers/Public?limit=100"
   cursor = ""
   all_servers = []
@@ -510,10 +547,6 @@ async def resolve_server_ip_and_region(
         return None
 
       clean_ip = server_address.split(":")[0]
-      known_ips = {node["ip"] for node in TRACKED_NODES.values()}
-      if clean_ip in known_ips:
-        return None
-
       geo_url = f"http://ip-api.com/json/{clean_ip}"
       async with session.get(geo_url) as geo_resp:
         if geo_resp.status == 200:
@@ -531,82 +564,180 @@ async def resolve_server_ip_and_region(
   return None
 
 
+async def monitor_client_versions():
+  """Monitors Roblox client deployment channels for builds/testing rollouts."""
+  await bot.wait_until_ready()
+  known_version = None
+  channels = ["WindowsPlayer", "MacPlayer"]
+  
+  while not bot.is_closed():
+    try:
+      async with aiohttp.ClientSession() as session:
+        for channel in channels:
+          url = f"https://clientsettingscdn.roblox.com/v1/client-version/{channel}"
+          async with session.get(url) as resp:
+            if resp.status == 200:
+              data = await resp.json()
+              client_version = data.get("clientVersionUpload")
+              if client_version:
+                if known_version is None:
+                  known_version = client_version
+                elif client_version != known_version:
+                  old_version = known_version
+                  known_version = client_version
+                  
+                  embed = {
+                      "title": f"🧪 New Roblox {channel} Build / Testing Rollout Detected!",
+                      "color": 16776960,
+                      "fields": [
+                          {"name": "Deployment Channel", "value": f"`{channel}`", "inline": True},
+                          {"name": "Previous Build", "value": f"`{old_version}`", "inline": False},
+                          {"name": "New Build Hash", "value": f"`{client_version}`", "inline": False},
+                          {"name": "Status", "value": "⚠️ Edge nodes and test servers are spinning up fresh updates.", "inline": False}
+                      ],
+                      "footer": {"text": "Client Deployment Telemetry Watcher"}
+                  }
+                  
+                  async with session.post(
+                      DATACENTER_ALERT_WEBHOOK_URL, json={"embeds": [embed]}
+                  ) as webhook_resp:
+                    pass
+    except Exception as e:
+      print(f"[ERROR LOG] Client version monitor error: {type(e).__name__} - {e}")
+    
+    await asyncio.sleep(300)
+
+
+async def monitor_testing_and_staging_servers():
+  """Background daemon continuously scouting brand new servers spinning up in testing/staging."""
+  await bot.wait_until_ready()
+  TARGET_PLACE_IDS = [920587237]
+  
+  while not bot.is_closed():
+    try:
+      async with aiohttp.ClientSession() as session:
+        for place_id in TARGET_PLACE_IDS:
+          servers = await fetch_all_active_servers(place_id, session)
+          for server in servers:
+            job_id = server.get("id")
+            if not job_id:
+              continue
+              
+            if job_id not in SEEN_TESTING_SERVERS:
+              SEEN_TESTING_SERVERS.add(job_id)
+              # If it's a freshly minted node instance, instantly resolve & webhook notify
+              region_info = await resolve_server_ip_and_region(session, place_id, job_id)
+              if region_info:
+                ping = server.get("ping", 0)
+                playing = server.get("playing", 0)
+                max_players = server.get("maxPlayers", 0)
+                
+                embed = {
+                    "title": "🧪 Brand New Server / Testing Instance Spawned!",
+                    "color": 15158332,
+                    "fields": [
+                        {"name": "Location", "value": f"{region_info['city']}, {region_info['country']}", "inline": True},
+                        {"name": "IP Node", "value": f"`{region_info['ip']}`", "inline": False},
+                        {"name": "ISP / Host", "value": region_info['isp'], "inline": True},
+                        {"name": "Player Load", "value": f"`{playing}/{max_players}`", "inline": True},
+                        {"name": "Node Latency", "value": f"`{ping} ms`", "inline": True},
+                        {"name": "Job ID", "value": f"`{job_id}`", "inline": False},
+                        {
+                            "name": "Direct Join Link",
+                            "value": f"__[Join Testing Instance](https://www.roblox.com/games/{place_id}?privateServerLinkCode={job_id})__",
+                            "inline": False
+                        }
+                    ],
+                    "footer": {"text": "Staging & Testing Server Radar • Real-Time Interception"}
+                }
+                
+                async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json={"embeds": [embed]}) as resp:
+                  pass
+                  
+          if len(SEEN_TESTING_SERVERS) > 3000:
+            SEEN_TESTING_SERVERS.clear()
+    except Exception as e:
+      print(f"[ERROR LOG] Testing server monitor error: {e}")
+      
+    await asyncio.sleep(20)
+
+
 async def monitor_live_game_servers():
   await bot.wait_until_ready()
-  TARGET_PLACE_ID = 920587237
+  TARGET_PLACE_IDS = [920587237]
 
-  # Initial population check so we don't spam historical servers on boot
   async with aiohttp.ClientSession() as session:
-    initial_servers = await fetch_all_active_servers(TARGET_PLACE_ID, session)
-    for server in initial_servers:
-      job_id = server.get("id")
-      if job_id:
-        SEEN_SERVERS.add(job_id)
+    for place_id in TARGET_PLACE_IDS:
+      initial_servers = await fetch_all_active_servers(place_id, session)
+      for server in initial_servers:
+        job_id = server.get("id")
+        if job_id:
+          SEEN_SERVERS.add(job_id)
     print(f"[HOST SCANNER] Initialized tracking with {len(SEEN_SERVERS)} active servers.")
 
   while not bot.is_closed():
     try:
       async with aiohttp.ClientSession() as session:
-        current_servers = await fetch_all_active_servers(TARGET_PLACE_ID, session)
-        current_server_ids = {s.get("id") for s in current_servers if s.get("id")}
+        for target_place_id in TARGET_PLACE_IDS:
+          current_servers = await fetch_all_active_servers(target_place_id, session)
+          current_server_ids = {s.get("id") for s in current_servers if s.get("id")}
 
-        new_servers_found = []
-        for server in current_servers:
-          job_id = server.get("id")
-          if not job_id:
-            continue
-          
-          if job_id not in SEEN_SERVERS:
-            SEEN_SERVERS.add(job_id)
-            new_servers_found.append(server)
+          new_servers_found = []
+          for server in current_servers:
+            job_id = server.get("id")
+            if not job_id:
+              continue
+            
+            if job_id not in SEEN_SERVERS:
+              SEEN_SERVERS.add(job_id)
+              new_servers_found.append(server)
 
-        # Cleanup dead servers from memory to prevent bloat
-        dead_servers = SEEN_SERVERS - current_server_ids
-        for dead_id in dead_servers:
-          SEEN_SERVERS.remove(dead_id)
+          dead_servers = SEEN_SERVERS - current_server_ids
+          for dead_id in dead_servers:
+            SEEN_SERVERS.remove(dead_id)
 
-        if len(SEEN_SERVERS) > 2500:
-          SEEN_SERVERS.clear()
+          if len(SEEN_SERVERS) > 2500:
+            SEEN_SERVERS.clear()
 
-        for server in new_servers_found:
-          job_id = server.get("id")
-          new_region = await resolve_server_ip_and_region(
-              session, TARGET_PLACE_ID, job_id
-          )
-          if new_region:
-            ping = server.get("ping", 0)
-            playing = server.get("playing", 0)
-            max_players = server.get("maxPlayers", 0)
+          for server in new_servers_found:
+            job_id = server.get("id")
+            new_region = await resolve_server_ip_and_region(
+                session, target_place_id, job_id
+            )
+            if new_region:
+              ping = server.get("ping", 0)
+              playing = server.get("playing", 0)
+              max_players = server.get("maxPlayers", 0)
 
-            embed = {
-                "title": "🚨 New Roblox Country/Region Discovered!",
-                "color": 16711680,
-                "fields": [
-                    {"name": "Country", "value": new_region["country"], "inline": True},
-                    {"name": "City", "value": new_region["city"], "inline": True},
-                    {"name": "IP Node", "value": f"`{new_region['ip']}`", "inline": False},
-                    {"name": "ISP / Host", "value": new_region["isp"], "inline": True},
-                    {"name": "Player Load", "value": f"`{playing}/{max_players}`", "inline": True},
-                    {"name": "Node Latency / Ping", "value": f"`{ping} ms`", "inline": True},
-                    {"name": "Job ID", "value": f"`{job_id}`", "inline": False},
-                    {
-                        "name": "Direct Join Link",
-                        "value": (
-                            "__[Join Server](https://www.roblox.com/games/"
-                            f"{TARGET_PLACE_ID}?privateServerLinkCode={job_id})__"
-                        ),
-                        "inline": False,
-                    },
-                ],
-                "footer": {
-                    "text": "Live Instance Radar • Region Tracking Active"
-                },
-            }
+              embed = {
+                  "title": "🚨 New Roblox Country/Region Discovered!",
+                  "color": 16711680,
+                  "fields": [
+                      {"name": "Country", "value": new_region["country"], "inline": True},
+                      {"name": "City", "value": new_region["city"], "inline": True},
+                      {"name": "IP Node", "value": f"`{new_region['ip']}`", "inline": False},
+                      {"name": "ISP / Host", "value": new_region["isp"], "inline": True},
+                      {"name": "Player Load", "value": f"`{playing}/{max_players}`", "inline": True},
+                      {"name": "Node Latency / Ping", "value": f"`{ping} ms`", "inline": True},
+                      {"name": "Job ID", "value": f"`{job_id}`", "inline": False},
+                      {
+                          "name": "Direct Join Link",
+                          "value": (
+                              "__[Join Server](https://www.roblox.com/games/"
+                              f"{target_place_id}?privateServerLinkCode={job_id})__"
+                          ),
+                          "inline": False,
+                      },
+                  ],
+                  "footer": {
+                      "text": "Live Instance Radar • Region Tracking Active"
+                  },
+              }
 
-            async with session.post(
-                DATACENTER_ALERT_WEBHOOK_URL, json={"embeds": [embed]}
-            ) as webhook_resp:
-              pass
+              async with session.post(
+                  DATACENTER_ALERT_WEBHOOK_URL, json={"embeds": [embed]}
+              ) as webhook_resp:
+                pass
     except Exception as e:
       print(f"[ERROR LOG] Live server tracker error: {type(e).__name__} - {e}")
 
@@ -950,6 +1081,11 @@ async def stats_command(interaction: discord.Interaction):
           "Mumbai": 0,
           "Sydney": 0,
           "Cape Town": 0,
+          "Santiago": 0,
+          "Istanbul": 0,
+          "Milan": 0,
+          "Athens": 0,
+          "Zürich": 0,
           "Frankfurt am Main": 0,
           "London": 0,
           "Paris": 0,
@@ -960,8 +1096,6 @@ async def stats_command(interaction: discord.Interaction):
           "New York City, New York": 0,
           "New York": 0,
           "Chicago, Illinois": 0,
-          "Atlanta, Georgia": 0,
-          "Miami, Florida": 0,
           "Seattle, Washington": 0,
           "São Paulo": 0,
       }
@@ -1008,42 +1142,36 @@ async def stats_command(interaction: discord.Interaction):
           color=0x2B2D31,
       )
       embed2.add_field(
-          name="🌎 North America",
+          name="🌎 North & South America",
           value=(
               f"🇺🇸 **Dallas, Texas**\n└ `{region_counts['Dallas, Texas']:,}`"
               f" servers\n🇺🇸 **Ashburn, Virginia**\n└"
               f" `{region_counts['Ashburn, Virginia']:,}` servers\n🇺🇸 **Los"
               f" Angeles, California**\n└"
               f" `{region_counts['Los Angeles, California']:,}` servers\n🇺🇸"
-              f" **New York City, New York**\n└ `{ny_total:,}` servers"
+              f" **New York City, New York**\n└ `{ny_total:,}` servers\n🇧🇷 **São Paulo**\n└ `{region_counts['São Paulo']:,}` servers\n🇨🇱 **Santiago**\n└ `{region_counts['Santiago']:,}` servers"
           ),
-          inline=False,
-      )
-      embed2.add_field(
-          name="🌎 South America",
-          value=f"🇧🇷 **São Paulo**\n└ `{region_counts['São Paulo']:,}` servers",
           inline=False,
       )
       embed2.set_footer(text=footer_text)
 
       embed3 = discord.Embed(title="", description="", color=0x2B2D31)
       embed3.add_field(
-          name="🇪🇺 Europe",
+          name="🇪🇺 Europe & Middle East",
           value=(
               f"🇩🇪 **Frankfurt am Main**\n└"
               f" `{region_counts['Frankfurt am Main']:,}` servers\n🇬🇧"
               f" **London**\n└ `{region_counts['London']:,}` servers\n🇫🇷"
               f" **Paris**\n└ `{region_counts['Paris']:,}` servers\n🇳🇱"
-              f" **Amsterdam**\n└ `{region_counts['Amsterdam']:,}` servers"
+              f" **Amsterdam**\n└ `{region_counts['Amsterdam']:,}` servers\n🇹🇷 **Istanbul**\n└ `{region_counts['Istanbul']:,}` servers\n🇮🇹 **Milan**\n└ `{region_counts['Milan']:,}` servers\n🇨🇭 **Zürich**\n└ `{region_counts['Zürich']:,}` servers"
           ),
           inline=False,
       )
       embed3.add_field(
           name="🌏 Asia, Oceania & Africa",
           value=(
-              f"🇸🇬 **Singapore**\n└ `{region_counts['Singapore']:,}`"
+              f"🇿🇦 **Cape Town**\n└ `{region_counts['Cape Town']:,}` servers\n🇸🇬 **Singapore**\n└ `{region_counts['Singapore']:,}`"
               f" servers\n🇯🇵 **Tokyo**\n└ `{region_counts['Tokyo']:,}`"
-              f" servers\n🇮🇳 **Mumbai**\n└ `{region_counts['Mumbai']:,}`"
               f" servers\n🇦🇺 **Sydney**\n└ `{region_counts['Sydney']:,}`"
               " servers"
           ),
@@ -1087,7 +1215,7 @@ async def stats_command(interaction: discord.Interaction):
 
 @bot.tree.command(
     name="findnewhost",
-    description="Scan and display recently discovered Roblox server regions, IPs, and join links.",
+    description="Scan, locate and sync newly created/testing Roblox servers matching datacenter format.",
 )
 @app_commands.check(has_bot_access)
 async def findnewhost(interaction: discord.Interaction):
@@ -1098,7 +1226,7 @@ async def findnewhost(interaction: discord.Interaction):
       servers = await fetch_all_active_servers(TARGET_PLACE_ID, session)
       
       found_nodes = []
-      for server in servers[:10]:  # Limit to 10 recent instances to prevent embed overflow
+      for server in servers[:10]:
         job_id = server.get("id")
         if not job_id:
           continue
@@ -1119,8 +1247,8 @@ async def findnewhost(interaction: discord.Interaction):
     if not found_nodes:
       await interaction.followup.send(
           embed=discord.Embed(
-              title="🔍 Host Scanner",
-              description="No new unique server regions were resolved in the current scan cycle. Try again shortly.",
+              title="🔍 Testing Host Radar",
+              description="No new testing or staging nodes resolved in the active scan cycle. Try again shortly.",
               color=0xFEE75C
           ),
           ephemeral=True
@@ -1128,8 +1256,8 @@ async def findnewhost(interaction: discord.Interaction):
       return
 
     embed = discord.Embed(
-        title="🌐 Newly Discovered Roblox Host Regions",
-        description="Real-time scan results showing active server instances on unique infrastructure nodes.",
+        title="🧪 Newly Spun-Up Testing & Staging Server Nodes",
+        description="Real-time scan synchronized with datacenter telemetry feeds.",
         color=0x57F287,
         timestamp=datetime.now(timezone.utc)
     )
@@ -1139,13 +1267,18 @@ async def findnewhost(interaction: discord.Interaction):
       field_value = (
           f"• **Location:** `{node['city']}, {node['country']}`\n"
           f"• **IP Node:** `{node['ip']}`\n"
-          f"• **ISP:** `{node['isp']}`\n"
+          f"• **ISP/Host:** `{node['isp']}`\n"
           f"• **Players:** `{node['playing']}/{node['max']}` | **Ping:** `{node['ping']}ms`\n"
-          f"• **Direct Link:** [Join Instance]({join_url})"
+          f"• **Direct Link:** [Join Testing Instance]({join_url})"
       )
-      embed.add_field(name=f"📍 {node['city']} ({node['country']})", value=field_value, inline=False)
+      embed.add_field(name=f"📍 Node [{node['city']}]", value=field_value, inline=False)
 
-    embed.set_footer(text="Instance Radar • Live Host Scanner")
+    embed.set_footer(text="Datacenter Telemetry Subsystem • Testing Node Matrix")
+    
+    # Broadcast to Datacenter webhook as well to match user specification
+    async with aiohttp.ClientSession() as session:
+      await session.post(DATACENTER_ALERT_WEBHOOK_URL, json={"embeds": [embed.to_dict()]})
+
     await interaction.followup.send(embed=embed, ephemeral=True)
 
   except Exception as e:
@@ -1153,7 +1286,7 @@ async def findnewhost(interaction: discord.Interaction):
     await interaction.followup.send(
         embed=discord.Embed(
             title="⚠️ Error",
-            description=f"Failed to scan new hosts: `{e}`",
+            description=f"Failed to scan testing hosts: `{e}`",
             color=0xED4245,
         ),
         ephemeral=True,
