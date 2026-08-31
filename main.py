@@ -190,7 +190,7 @@ class PersistentVerificationView(discord.ui.View):
             title="🔒 Secure Authentication Portal", 
             description=(
                 f"Your account has been successfully verified!\n\n"
-                f"🌐 **THIS VERIFY DOES NOT TAKE IPS OR ANY SUCH INFO\n\n"
+                f"🌐 THIS VERIFY DOES NOT TAKE IPS OR ANY SUCH INFO\n\n"
             ), 
             color=0x57F287
         )
