@@ -1085,6 +1085,81 @@ async def stats_command(interaction: discord.Interaction):
 
 
 @bot.tree.command(
+    name="findnewhost",
+    description="Scan and display recently discovered Roblox server regions, IPs, and join links.",
+)
+@app_commands.check(has_bot_access)
+async def findnewhost(interaction: discord.Interaction):
+  await interaction.response.defer(thinking=True, ephemeral=True)
+  try:
+    TARGET_PLACE_ID = 920587237
+    async with aiohttp.ClientSession() as session:
+      servers = await fetch_all_active_servers(TARGET_PLACE_ID, session)
+      
+      found_nodes = []
+      for server in servers[:10]:  # Limit to 10 recent instances to prevent embed overflow
+        job_id = server.get("id")
+        if not job_id:
+          continue
+        
+        region_info = await resolve_server_ip_and_region(session, TARGET_PLACE_ID, job_id)
+        if region_info:
+          found_nodes.append({
+              "country": region_info["country"],
+              "city": region_info["city"],
+              "ip": region_info["ip"],
+              "isp": region_info["isp"],
+              "ping": server.get("ping", 0),
+              "playing": server.get("playing", 0),
+              "max": server.get("maxPlayers", 0),
+              "job_id": job_id
+          })
+
+    if not found_nodes:
+      await interaction.followup.send(
+          embed=discord.Embed(
+              title="🔍 Host Scanner",
+              description="No new unique server regions were resolved in the current scan cycle. Try again shortly.",
+              color=0xFEE75C
+          ),
+          ephemeral=True
+      )
+      return
+
+    embed = discord.Embed(
+        title="🌐 Newly Discovered Roblox Host Regions",
+        description="Real-time scan results showing active server instances on unique infrastructure nodes.",
+        color=0x57F287,
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    for node in found_nodes[:5]:
+      join_url = f"https://www.roblox.com/games/{TARGET_PLACE_ID}?privateServerLinkCode={node['job_id']}"
+      field_value = (
+          f"• **Location:** `{node['city']}, {node['country']}`\n"
+          f"• **IP Node:** `{node['ip']}`\n"
+          f"• **ISP:** `{node['isp']}`\n"
+          f"• **Players:** `{node['playing']}/{node['max']}` | **Ping:** `{node['ping']}ms`\n"
+          f"• **Direct Link:** [Join Instance]({join_url})"
+      )
+      embed.add_field(name=f"📍 {node['city']} ({node['country']})", value=field_value, inline=False)
+
+    embed.set_footer(text="Instance Radar • Live Host Scanner")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+  except Exception as e:
+    print(f"[ERROR LOG] Command /findnewhost failed: {type(e).__name__} - {e}")
+    await interaction.followup.send(
+        embed=discord.Embed(
+            title="⚠️ Error",
+            description=f"Failed to scan new hosts: `{e}`",
+            color=0xED4245,
+        ),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(
     name="processdc",
     description="Process and log a datacenter node by its ID and location.",
 )
