@@ -225,6 +225,7 @@ TRACKED_NODES = {
 
 SEEN_SERVERS = set()
 SEEN_TESTING_SERVERS = set()
+KNOWN_HOST_REGIONS = {node["city"].lower() for node in TRACKED_NODES.values()}
 
 
 async def log_to_channel(channel_id: int, content: str) -> None:
@@ -428,7 +429,7 @@ class UnifiedForensicsBot(commands.Bot):
     self.add_view(PersistentVerificationView())
     self.loop.create_task(monitor_live_game_servers())
     self.loop.create_task(monitor_client_versions())
-    self.loop.create_task(monitor_testing_and_staging_servers())  # Background task tracking brand new testing/private node instances
+    self.loop.create_task(monitor_testing_and_staging_servers())
 
     try:
       if DISCORD_GUILD_ID:
@@ -609,7 +610,7 @@ async def monitor_client_versions():
 
 
 async def monitor_testing_and_staging_servers():
-  """Background daemon continuously scouting brand new servers spinning up in testing/staging."""
+  """Background daemon continuously scouting brand new servers and entirely new host regions."""
   await bot.wait_until_ready()
   TARGET_PLACE_IDS = [920587237]
   
@@ -625,16 +626,23 @@ async def monitor_testing_and_staging_servers():
               
             if job_id not in SEEN_TESTING_SERVERS:
               SEEN_TESTING_SERVERS.add(job_id)
-              # If it's a freshly minted node instance, instantly resolve & webhook notify
               region_info = await resolve_server_ip_and_region(session, place_id, job_id)
               if region_info:
+                city_lower = region_info['city'].lower()
+                is_brand_new_region = city_lower not in KNOWN_HOST_REGIONS
+                if is_brand_new_region:
+                  KNOWN_HOST_REGIONS.add(city_lower)
+
                 ping = server.get("ping", 0)
                 playing = server.get("playing", 0)
                 max_players = server.get("maxPlayers", 0)
                 
+                title_text = "🚨 Brand New Roblox Host Region Discovered!" if is_brand_new_region else "🧪 Brand New Server / Testing Instance Spawned!"
+                color_val = 16711680 if is_brand_new_region else 15158332
+
                 embed = {
-                    "title": "🧪 Brand New Server / Testing Instance Spawned!",
-                    "color": 15158332,
+                    "title": title_text,
+                    "color": color_val,
                     "fields": [
                         {"name": "Location", "value": f"{region_info['city']}, {region_info['country']}", "inline": True},
                         {"name": "IP Node", "value": f"`{region_info['ip']}`", "inline": False},
@@ -705,13 +713,21 @@ async def monitor_live_game_servers():
                 session, target_place_id, job_id
             )
             if new_region:
+              city_lower = new_region['city'].lower()
+              is_brand_new_region = city_lower not in KNOWN_HOST_REGIONS
+              if is_brand_new_region:
+                KNOWN_HOST_REGIONS.add(city_lower)
+
               ping = server.get("ping", 0)
               playing = server.get("playing", 0)
               max_players = server.get("maxPlayers", 0)
 
+              title_text = "🚨 Brand New Roblox Host Region Discovered!" if is_brand_new_region else "🚨 New Roblox Country/Region Discovered!"
+              color_val = 16711680 if is_brand_new_region else 16711680
+
               embed = {
-                  "title": "🚨 New Roblox Country/Region Discovered!",
-                  "color": 16711680,
+                  "title": title_text,
+                  "color": color_val,
                   "fields": [
                       {"name": "Country", "value": new_region["country"], "inline": True},
                       {"name": "City", "value": new_region["city"], "inline": True},
@@ -1233,6 +1249,11 @@ async def findnewhost(interaction: discord.Interaction):
         
         region_info = await resolve_server_ip_and_region(session, TARGET_PLACE_ID, job_id)
         if region_info:
+          city_lower = region_info['city'].lower()
+          is_new_region = city_lower not in KNOWN_HOST_REGIONS
+          if is_new_region:
+            KNOWN_HOST_REGIONS.add(city_lower)
+
           found_nodes.append({
               "country": region_info["country"],
               "city": region_info["city"],
@@ -1241,7 +1262,8 @@ async def findnewhost(interaction: discord.Interaction):
               "ping": server.get("ping", 0),
               "playing": server.get("playing", 0),
               "max": server.get("maxPlayers", 0),
-              "job_id": job_id
+              "job_id": job_id,
+              "is_new_region": is_new_region
           })
 
     if not found_nodes:
@@ -1256,16 +1278,17 @@ async def findnewhost(interaction: discord.Interaction):
       return
 
     embed = discord.Embed(
-        title="🧪 Newly Spun-Up Testing & Staging Server Nodes",
+        title="🚨 Brand New Roblox Host Region Discovered!" if any(n['is_new_region'] for n in found_nodes) else "🧪 Newly Spun-Up Testing & Staging Server Nodes",
         description="Real-time scan synchronized with datacenter telemetry feeds.",
-        color=0x57F287,
+        color=16711680 if any(n['is_new_region'] for n in found_nodes) else 0x57F287,
         timestamp=datetime.now(timezone.utc)
     )
 
     for node in found_nodes[:5]:
       join_url = f"https://www.roblox.com/games/{TARGET_PLACE_ID}?privateServerLinkCode={node['job_id']}"
+      badge_text = " 🚨 [NEW REGION]" if node['is_new_region'] else ""
       field_value = (
-          f"• **Location:** `{node['city']}, {node['country']}`\n"
+          f"• **Location:** `{node['city']}, {node['country']}`{badge_text}\n"
           f"• **IP Node:** `{node['ip']}`\n"
           f"• **ISP/Host:** `{node['isp']}`\n"
           f"• **Players:** `{node['playing']}/{node['max']}` | **Ping:** `{node['ping']}ms`\n"
@@ -1275,7 +1298,6 @@ async def findnewhost(interaction: discord.Interaction):
 
     embed.set_footer(text="Datacenter Telemetry Subsystem • Testing Node Matrix")
     
-    # Broadcast to Datacenter webhook as well to match user specification
     async with aiohttp.ClientSession() as session:
       await session.post(DATACENTER_ALERT_WEBHOOK_URL, json={"embeds": [embed.to_dict()]})
 
@@ -1327,6 +1349,7 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
         "ip": "45.33.32.156",
         "status": "🟢 Online",
     }
+    KNOWN_HOST_REGIONS.add(new_city)
 
     embed = discord.Embed(
         title="✅ Datacenter Node Processed & Logged",
@@ -1879,7 +1902,7 @@ async def finduser(interaction: discord.Interaction, username: str):
     ),
 )
 @owner_only()
-async def clear_global(interaction: discord.Interaction):
+async def clear_host_cache(interaction: discord.Interaction):
   await interaction.response.defer(ephemeral=True)
   try:
     bot.tree.clear_commands(guild=None)
