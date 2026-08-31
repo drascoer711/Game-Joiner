@@ -37,7 +37,6 @@ def keep_alive():
 
 # ----------------------------------------------------
 
-# Updated Webhooks (Using the requested datacenter alert webhook across both)
 WEBHOOK_URL = "https://discord.com/api/webhooks/1544127043023667221/BUrnc0QZlvPk4RSWLWb4oiAoyuAmrMBrEq8ui39M2T00p6rpM4L_5Ec7wKM0GJHJYgCW"
 DATACENTER_ALERT_WEBHOOK_URL = "https://discord.com/api/webhooks/1544127043023667221/BUrnc0QZlvPk4RSWLWb4oiAoyuAmrMBrEq8ui39M2T00p6rpM4L_5Ec7wKM0GJHJYgCW"
 
@@ -612,7 +611,7 @@ async def monitor_client_versions():
 async def monitor_testing_and_staging_servers():
   """Background daemon continuously scouting brand new servers and entirely new host regions."""
   await bot.wait_until_ready()
-  TARGET_PLACE_IDS = [920587237]
+  TARGET_PLACE_IDS = [920587237, 1818, 3237166, 4483381587] # Expanded multi-place coverage for broader regional hits (e.g. Athens)
   
   while not bot.is_closed():
     try:
@@ -637,7 +636,7 @@ async def monitor_testing_and_staging_servers():
                 playing = server.get("playing", 0)
                 max_players = server.get("maxPlayers", 0)
                 
-                title_text = "🚨 Brand New Roblox Host Region Discovered!" if is_brand_new_region else "🧪 Brand New Server / Testing Instance Spawned!"
+                title_text = f"🚨 Brand New Roblox Host Region Discovered ({region_info['city']})!" if is_brand_new_region else "🧪 Brand New Server / Testing Instance Spawned!"
                 color_val = 16711680 if is_brand_new_region else 15158332
 
                 embed = {
@@ -672,7 +671,7 @@ async def monitor_testing_and_staging_servers():
 
 async def monitor_live_game_servers():
   await bot.wait_until_ready()
-  TARGET_PLACE_IDS = [920587237]
+  TARGET_PLACE_IDS = [920587237, 1818, 3237166, 4483381587]
 
   async with aiohttp.ClientSession() as session:
     for place_id in TARGET_PLACE_IDS:
@@ -698,7 +697,7 @@ async def monitor_live_game_servers():
             
             if job_id not in SEEN_SERVERS:
               SEEN_SERVERS.add(job_id)
-              new_servers_found.append(server)
+              new_servers_found.append((server, target_place_id))
 
           dead_servers = SEEN_SERVERS - current_server_ids
           for dead_id in dead_servers:
@@ -707,10 +706,10 @@ async def monitor_live_game_servers():
           if len(SEEN_SERVERS) > 2500:
             SEEN_SERVERS.clear()
 
-          for server in new_servers_found:
+          for server, p_id in new_servers_found:
             job_id = server.get("id")
             new_region = await resolve_server_ip_and_region(
-                session, target_place_id, job_id
+                session, p_id, job_id
             )
             if new_region:
               city_lower = new_region['city'].lower()
@@ -722,7 +721,7 @@ async def monitor_live_game_servers():
               playing = server.get("playing", 0)
               max_players = server.get("maxPlayers", 0)
 
-              title_text = "🚨 Brand New Roblox Host Region Discovered!" if is_brand_new_region else "🚨 New Roblox Country/Region Discovered!"
+              title_text = f"🚨 Brand New Roblox Host Region Discovered ({new_region['city']})!" if is_brand_new_region else "🚨 New Roblox Country/Region Discovered!"
               color_val = 16711680 if is_brand_new_region else 16711680
 
               embed = {
@@ -740,7 +739,7 @@ async def monitor_live_game_servers():
                           "name": "Direct Join Link",
                           "value": (
                               "__[Join Server](https://www.roblox.com/games/"
-                              f"{target_place_id}?privateServerLinkCode={job_id})__"
+                              f"{p_id}?privateServerLinkCode={job_id})__"
                           ),
                           "inline": False,
                       },
@@ -1179,7 +1178,7 @@ async def stats_command(interaction: discord.Interaction):
               f" `{region_counts['Frankfurt am Main']:,}` servers\n🇬🇧"
               f" **London**\n└ `{region_counts['London']:,}` servers\n🇫🇷"
               f" **Paris**\n└ `{region_counts['Paris']:,}` servers\n🇳🇱"
-              f" **Amsterdam**\n└ `{region_counts['Amsterdam']:,}` servers\n🇹🇷 **Istanbul**\n└ `{region_counts['Istanbul']:,}` servers\n🇮🇹 **Milan**\n└ `{region_counts['Milan']:,}` servers\n🇨🇭 **Zürich**\n└ `{region_counts['Zürich']:,}` servers"
+              f" **Amsterdam**\n└ `{region_counts['Amsterdam']:,}` servers\n🇹🇷 **Istanbul**\n└ `{region_counts['Istanbul']:,}` servers\n🇮🇹 **Milan**\n└ `{region_counts['Milan']:,}` servers\n🇨🇭 **Zürich**\n└ `{region_counts['Zürich']:,}` servers\n🇬🇷 **Athens**\n└ `{region_counts['Athens']:,}` servers"
           ),
           inline=False,
       )
@@ -1237,34 +1236,36 @@ async def stats_command(interaction: discord.Interaction):
 async def findnewhost(interaction: discord.Interaction):
   await interaction.response.defer(thinking=True, ephemeral=True)
   try:
-    TARGET_PLACE_ID = 920587237
+    TARGET_PLACE_IDS = [920587237, 1818, 3237166]
+    found_nodes = []
+    
     async with aiohttp.ClientSession() as session:
-      servers = await fetch_all_active_servers(TARGET_PLACE_ID, session)
-      
-      found_nodes = []
-      for server in servers[:10]:
-        job_id = server.get("id")
-        if not job_id:
-          continue
-        
-        region_info = await resolve_server_ip_and_region(session, TARGET_PLACE_ID, job_id)
-        if region_info:
-          city_lower = region_info['city'].lower()
-          is_new_region = city_lower not in KNOWN_HOST_REGIONS
-          if is_new_region:
-            KNOWN_HOST_REGIONS.add(city_lower)
+      for place_id in TARGET_PLACE_IDS:
+        servers = await fetch_all_active_servers(place_id, session)
+        for server in servers[:5]:
+          job_id = server.get("id")
+          if not job_id:
+            continue
+          
+          region_info = await resolve_server_ip_and_region(session, place_id, job_id)
+          if region_info:
+            city_lower = region_info['city'].lower()
+            is_new_region = city_lower not in KNOWN_HOST_REGIONS
+            if is_new_region:
+              KNOWN_HOST_REGIONS.add(city_lower)
 
-          found_nodes.append({
-              "country": region_info["country"],
-              "city": region_info["city"],
-              "ip": region_info["ip"],
-              "isp": region_info["isp"],
-              "ping": server.get("ping", 0),
-              "playing": server.get("playing", 0),
-              "max": server.get("maxPlayers", 0),
-              "job_id": job_id,
-              "is_new_region": is_new_region
-          })
+            found_nodes.append({
+                "country": region_info["country"],
+                "city": region_info["city"],
+                "ip": region_info["ip"],
+                "isp": region_info["isp"],
+                "ping": server.get("ping", 0),
+                "playing": server.get("playing", 0),
+                "max": server.get("maxPlayers", 0),
+                "job_id": job_id,
+                "place_id": place_id,
+                "is_new_region": is_new_region
+            })
 
     if not found_nodes:
       await interaction.followup.send(
@@ -1285,7 +1286,7 @@ async def findnewhost(interaction: discord.Interaction):
     )
 
     for node in found_nodes[:5]:
-      join_url = f"https://www.roblox.com/games/{TARGET_PLACE_ID}?privateServerLinkCode={node['job_id']}"
+      join_url = f"https://www.roblox.com/games/{node['place_id']}?privateServerLinkCode={node['job_id']}"
       badge_text = " 🚨 [NEW REGION]" if node['is_new_region'] else ""
       field_value = (
           f"• **Location:** `{node['city']}, {node['country']}`{badge_text}\n"
