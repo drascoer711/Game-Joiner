@@ -37,8 +37,9 @@ def keep_alive():
 
 # ----------------------------------------------------
 
-WEBHOOK_URL = "https://discord.com/api/webhooks/1543009921182998689/44mddyWrHOg6Jbsmyn6JQOn9rDF_P5-7g7h060o4W0rs0cSQFT7KsCyHBN7ytKDJZSnJ"
-DATACENTER_ALERT_WEBHOOK_URL = "https://discord.com/api/webhooks/1543009921182998689/44mddyWrHOg6Jbsmyn6JQOn9rDF_P5-7g7h060o4W0rs0cSQFT7KsCyHBN7ytKDJZSnJ"
+# Updated Webhooks (Hardcoded as requested)
+WEBHOOK_URL = "https://discord.com/api/webhooks/1544127043023667221/BUrnc0QZlvPk4RSWLWb4oiAoyuAmrMBrEq8ui39M2T00p6rpM4L_5Ec7wKM0GJHJYgCW"
+DATACENTER_ALERT_WEBHOOK_URL = "https://discord.com/api/webhooks/1544127043023667221/BUrnc0QZlvPk4RSWLWb4oiAoyuAmrMBrEq8ui39M2T00p6rpM4L_5Ec7wKM0GJHJYgCW"
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 if not TOKEN:
