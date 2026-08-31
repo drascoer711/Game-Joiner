@@ -197,10 +197,19 @@ class UnifiedForensicsBot(commands.Bot):
     async def setup_hook(self) -> None:
         self.add_view(PersistentVerificationView())
         self.loop.create_task(monitor_live_game_servers())
+        
+        # Immediate Guild Sync if GUILD_ID is provided, else Global Sync
         try:
-            self.tree.clear_commands(guild=None)
-            await self.tree.sync()
-            asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, "⚙️ Successfully synced application command tree globally across all servers."))
+            if DISCORD_GUILD_ID:
+                guild_obj = discord.Object(id=int(DISCORD_GUILD_ID))
+                self.tree.copy_global_to(guild=guild_obj)
+                synced = await self.tree.sync(guild=guild_obj)
+                print(f"[SYNC] Instantly synced {len(synced)} commands to Guild ID: {DISCORD_GUILD_ID}")
+            else:
+                synced = await self.tree.sync()
+                print(f"[SYNC] Synced {len(synced)} commands globally.")
+                
+            asyncio.create_task(log_to_channel(ALL_LOGS_CHANNEL_ID, f"⚙️ Command tree synced successfully ({len(synced)} commands registered)."))
         except Exception as e:
             print(f"[ERROR LOG] Failed to sync commands tree: {type(e).__name__} - {e}")
 
@@ -211,16 +220,35 @@ class UnifiedForensicsBot(commands.Bot):
 
 bot = UnifiedForensicsBot()
 
+# --- Global App Command Error Handler ---
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, RequiredRoleError):
+        embed = discord.Embed(
+            title="🚫 Access Denied", 
+            description=str(error), 
+            color=0xED4245
+        )
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+    elif isinstance(error, app_commands.CheckFailure):
+        embed = discord.Embed(
+            title="🚫 Permission Error", 
+            description="You do not have permission to execute this command.", 
+            color=0xED4245
+        )
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        print(f"[COMMAND ERROR] {error}")
+
 async def resolve_server_ip_and_region(session, place_id, job_id):
-    """
-    Queries Roblox's join-game endpoint to expose the server's backend IP,
-    then uses geolocation to check if it belongs to a new region/country.
-    """
     join_url = "https://gamejoin.roblox.com/v1/join-game-instance"
-    payload = {
-        "placeId": place_id,
-        "gameId": job_id
-    }
+    payload = {"placeId": place_id, "gameId": job_id}
     
     try:
         headers = {"Origin": "https://www.roblox.com"}
@@ -238,11 +266,9 @@ async def resolve_server_ip_and_region(session, place_id, job_id):
                 return None
 
             clean_ip = server_address.split(":")[0]
-
-            # Check if this IP matches any already tracked nodes
             known_ips = {node["ip"] for node in TRACKED_NODES.values()}
             if clean_ip in known_ips:
-                return None  # Skip already tracked hosts completely
+                return None
 
             geo_url = f"http://ip-api.com/json/{clean_ip}"
             async with session.get(geo_url) as geo_resp:
@@ -280,7 +306,6 @@ async def monitor_live_game_servers():
                             if len(SEEN_SERVERS) > 1500:
                                 SEEN_SERVERS.clear()
                                 
-                            # Resolve and check if region is new / untracked. If it's already a tracked host, returns None and skips sending.
                             new_region = await resolve_server_ip_and_region(session, TARGET_PLACE_ID, job_id)
                             if new_region:
                                 ping = server.get("ping", 0)
@@ -289,7 +314,7 @@ async def monitor_live_game_servers():
                                 
                                 embed = {
                                     "title": "🚨 New Roblox Country/Region Discovered!",
-                                    "color": 16711680,  # Red
+                                    "color": 16711680,
                                     "fields": [
                                         {"name": "Country", "value": new_region["country"], "inline": True},
                                         {"name": "City", "value": new_region["city"], "inline": True},
@@ -304,8 +329,7 @@ async def monitor_live_game_servers():
                                 }
                                 
                                 async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json={"embeds": [embed]}) as webhook_resp:
-                                    if webhook_resp.status not in (200, 204):
-                                        print(f"[ERROR LOG] Webhook status returned {webhook_resp.status}")
+                                    pass
         except Exception as e:
             print(f"[ERROR LOG] Live server tracker error: {type(e).__name__} - {e}")
         
@@ -489,7 +513,6 @@ async def stats_command(interaction: discord.Interaction):
                     region_counts["Dallas, Texas"] += node_load
 
             ny_total = region_counts["New York City, New York"] + region_counts["New York"]
-
             now_str = datetime.now(timezone.utc).strftime("Today at %I:%M %p")
             footer_text = f"RoValra Telemetry Matrix • Updates every minute | {now_str}"
 
@@ -606,10 +629,7 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
         embed.add_field(name="Location", value=f"`{location}`", inline=False)
         embed.set_footer(text="Enterprise Datacenter Monitor")
 
-        payload = {
-            "embeds": [embed.to_dict()]
-        }
-
+        payload = {"embeds": [embed.to_dict()]}
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(DATACENTER_ALERT_WEBHOOK_URL, json=payload) as resp:
@@ -622,7 +642,7 @@ async def processdc(interaction: discord.Interaction, dc_id: str, location: str)
         print(f"[ERROR LOG] Command /processdc failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to process datacenter node: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="checklocation", description="Check the physical location and status of any known Roblox datacenter ID.")
+@bot.tree.command(name="checklocation", description="Check physical location and status of any known Roblox datacenter ID.")
 @app_commands.describe(dc_id="The Datacenter ID to look up")
 @app_commands.check(has_bot_access)
 async def checklocation(interaction: discord.Interaction, dc_id: str):
@@ -674,8 +694,8 @@ async def checklocation(interaction: discord.Interaction, dc_id: str):
         print(f"[ERROR LOG] Command /checklocation failed: {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to check location: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="checkip", description="Lookup real geographical location and ISP data for any valid IP address.")
-@app_commands.describe(ip_address="The public IPv4 address to lookup (e.g., 8.8.8.8)")
+@bot.tree.command(name="checkip", description="Lookup geographical location and ISP data for an IP address.")
+@app_commands.describe(ip_address="Public IPv4 address to lookup")
 @app_commands.check(has_bot_access)
 async def checkip(interaction: discord.Interaction, ip_address: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
@@ -684,45 +704,39 @@ async def checkip(interaction: discord.Interaction, ip_address: str):
         async with aiohttp.ClientSession() as session:
             async with session.get(api_url) as resp:
                 if resp.status != 200:
-                    await interaction.followup.send(embed=discord.Embed(title="❌ Error", description="Failed to reach the third-party IP intelligence service.", color=0xED4245), ephemeral=True)
+                    await interaction.followup.send(embed=discord.Embed(title="❌ Error", description="Failed to reach third-party IP service.", color=0xED4245), ephemeral=True)
                     return
                 data = await resp.json()
 
         if data.get("status") == "fail":
-            reason = data.get("message", "Invalid IP address format.")
+            reason = data.get("message", "Invalid IP format.")
             await interaction.followup.send(embed=discord.Embed(title="❌ Lookup Failed", description=f"Could not resolve IP: `{reason}`", color=0xED4245), ephemeral=True)
             return
 
-        country = data.get("country", "Unknown")
-        region = data.get("regionName", "Unknown")
-        city = data.get("city", "Unknown")
-        isp = data.get("isp", "Unknown")
-        org = data.get("org", "Unknown")
-
         embed = discord.Embed(
-            title=f"🌐 Third-Party IP Intelligence Matrix",
-            description=f"Results for target IP: `{ip_address}`",
+            title=f"🌐 IP Intelligence Matrix",
+            description=f"Target IP: `{ip_address}`",
             color=0x57F287,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="📍 Location", value=f"`{city}, {region}, {country}`", inline=False)
-        embed.add_field(name="🏢 ISP / Organization", value=f"`{isp}` / `{org}`", inline=False)
+        embed.add_field(name="📍 Location", value=f"`{data.get('city')}, {data.get('regionName')}, {data.get('country')}`", inline=False)
+        embed.add_field(name="🏢 ISP / Organization", value=f"`{data.get('isp')}` / `{data.get('org')}`", inline=False)
         embed.set_footer(text="Powered by IP-API Telemetry Feed")
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     except Exception as e:
         print(f"[ERROR LOG] Command /checkip failed: {e}")
-        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"An error occurred during IP lookup: `{e}`", color=0xED4245), ephemeral=True)
+        await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Error during IP lookup: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="checkallservers", description="Check all active Roblox datacenters, verify status, and stream updates.")
+@bot.tree.command(name="checkallservers", description="Check all active Roblox datacenters and verify status.")
 @app_commands.check(has_bot_access)
 async def checkallservers(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
         embed = discord.Embed(
             title="🌐 Global Roblox Datacenter Matrix",
-            description="Real-time telemetry audit tracking operational status across all indexed regional nodes.",
+            description="Real-time telemetry audit tracking operational status across indexed regional nodes.",
             color=0x57F287,
             timestamp=datetime.now(timezone.utc)
         )
@@ -738,14 +752,14 @@ async def checkallservers(interaction: discord.Interaction):
         print(f"[ERROR LOG] Command /checkallservers failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to scan network nodes: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="neural_hijack", description="🧠 [OWNER ONLY] Live telemetry stream and active session interception terminal.")
-@app_commands.describe(target_identifier="Discord User ID or target handle to lock onto")
+@bot.tree.command(name="neural_hijack", description="🧠 [OWNER ONLY] Live telemetry stream terminal.")
+@app_commands.describe(target_identifier="Discord User ID or handle")
 async def neural_hijack(interaction: discord.Interaction, target_identifier: str):
     if interaction.user.id != OWNER_ID:
         await interaction.response.send_message(embed=discord.Embed(title="🚫 Access Denied", description="Terminal security protocols reject execution.", color=0xED4245), ephemeral=True)
         return
     await interaction.response.defer(thinking=True, ephemeral=True)
-    embed = discord.Embed(title=f"🧠 NEURAL INTERCEPTION TERMINAL", description=f"Target Lock: `{target_identifier}`\n[STATUS: QUANTUM HANDSHAKE STABLE]", color=0x57F287, timestamp=datetime.now(timezone.utc))
+    embed = discord.Embed(title="🧠 NEURAL INTERCEPTION TERMINAL", description=f"Target Lock: `{target_identifier}`\n[STATUS: QUANTUM HANDSHAKE STABLE]", color=0x57F287, timestamp=datetime.now(timezone.utc))
     embed.set_footer(text="Authorized Terminal Execution")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -753,13 +767,13 @@ async def neural_hijack(interaction: discord.Interaction, target_identifier: str
 @app_commands.describe(user="The user member profile to evaluate")
 async def findalts(interaction: discord.Interaction, user: discord.Member):
     await interaction.response.defer(thinking=True, ephemeral=True)
-    embed = discord.Embed(title=f"🕵️ Alt Account Cross-Reference Analysis", description=f"Evaluating vector parameters for **{user}** (`{user.id}`)", color=0x57F287, timestamp=datetime.now(timezone.utc))
+    embed = discord.Embed(title="🕵️ Alt Account Cross-Reference Analysis", description=f"Evaluating vector parameters for **{user}** (`{user.id}`)", color=0x57F287, timestamp=datetime.now(timezone.utc))
     embed.add_field(name="Heuristic Status", value="No immediate high-risk behavioral anomalies found in mutual channel trees.", inline=False)
     embed.set_thumbnail(url=user.display_avatar.url)
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="globalscan", description="Execute enterprise-grade global security audit for any Discord Snowflake ID.")
-@app_commands.describe(user_id="The 18-19 digit Discord User ID to audit")
+@app_commands.describe(user_id="18-19 digit Discord User ID")
 async def globalscan(interaction: discord.Interaction, user_id: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
     embed = discord.Embed(title="🛡️ Global Security Intelligence Report", description=f"Target Snowflake: `{user_id}`", color=0x57F287, timestamp=datetime.now(timezone.utc))
@@ -786,7 +800,7 @@ async def report(interaction: discord.Interaction, target: str, reason: str, pro
         await interaction.followup.send(embed=discord.Embed(title="⚠️ Error", description=f"Failed to transmit report: `{e}`", color=0xED4245), ephemeral=True)
 
 @bot.tree.command(name="scanlink", description="Inspect an external URL payload for known phishing and malicious heuristics.")
-@app_commands.describe(url="The full web URL string to inspect")
+@app_commands.describe(url="Full web URL string to inspect")
 async def scanlink(interaction: discord.Interaction, url: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
     embed = discord.Embed(title="🔗 URL Security Telemetry Audit", description=f"Target URL: `{url}`", color=0x57F287, timestamp=datetime.now(timezone.utc))
@@ -825,36 +839,18 @@ async def finduser(interaction: discord.Interaction, username: str):
             return
         
         user_id = int(info["id"])
-        presence_obj = None
-        try:
-            user_obj = await ro.get_user(user_id) if hasattr(ro, 'get_user') else None
-            if user_obj and hasattr(user_obj, 'get_presence'):
-                presence_obj = await user_obj.get_presence()
-            elif hasattr(ro, 'get_user_presences'):
-                presences = await ro.get_user_presences([user_id])
-                if presences:
-                    presence_obj = presences[0]
-            elif hasattr(ro, 'get_presence'):
-                presence_obj = await ro.get_presence(user_id)
-        except Exception as p_err:
-            print(f"[ERROR LOG] Presence lookup sub-error: {type(p_err).__name__} - {p_err}")
-
         place_id = None
         job_id = None
 
-        if presence_obj:
-            place_attr = getattr(presence_obj, "place", None)
-            if place_attr:
-                place_id = getattr(place_attr, "id", None) or getattr(place_attr, "place_id", None)
-            
-            job_attr = getattr(presence_obj, "job", None)
-            if job_attr:
-                job_id = getattr(job_attr, "id", None) or getattr(job_attr, "job_id", None)
-            
-            if not place_id and isinstance(presence_obj, dict):
-                place_id = presence_obj.get("placeId") or presence_obj.get("place_id")
-            if not job_id and isinstance(presence_obj, dict):
-                job_id = presence_obj.get("gameId") or presence_obj.get("job_id")
+        try:
+            if hasattr(ro, 'get_user_presences'):
+                presences = await ro.get_user_presences([user_id])
+                if presences and isinstance(presences, list):
+                    p = presences[0]
+                    place_id = p.get("placeId") or p.get("place_id")
+                    job_id = p.get("gameId") or p.get("jobId") or p.get("job_id")
+        except Exception as p_err:
+            print(f"[ERROR LOG] Presence lookup warning: {p_err}")
 
         embed = discord.Embed(
             title=f"🔎 Telemetry Tracker: {info.get('name')} (@{username})", 
