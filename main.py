@@ -470,9 +470,10 @@ async def scan_command(interaction: discord.Interaction, username: str) -> None:
         print(f"[ERROR LOG] Command /scan failed: {type(e).__name__} - {e}")
         await interaction.followup.send(embed=discord.Embed(title="⚠️ System Error", description=f"Audit failed: `{e}`", color=0xED4245), ephemeral=True)
 
-@bot.tree.command(name="setupverify", description="Deploy the persistent interactive verification panel in the current channel.")
+# --- Integrated /setup-verify Commands ---
+@bot.tree.command(name="setup-verify", description="Deploy the persistent interactive verification panel in the current channel.")
 @app_commands.checks.has_permissions(administrator=True)
-async def setupverify(interaction: discord.Interaction):
+async def setup_verify(interaction: discord.Interaction):
     try:
         embed = discord.Embed(
             title="🛡️ Secure Verification Gateway", 
@@ -484,8 +485,13 @@ async def setupverify(interaction: discord.Interaction):
             await interaction.channel.send(embed=embed, view=PersistentVerificationView())
         await interaction.response.send_message(embed=discord.Embed(title="✅ Panel Deployed", description="The verification interface has been successfully instantiated.", color=0x57F287), ephemeral=True)
     except Exception as e:
-        print(f"[ERROR LOG] Command /setupverify failed: {type(e).__name__} - {e}")
+        print(f"[ERROR LOG] Command /setup-verify failed: {type(e).__name__} - {e}")
         await interaction.response.send_message(embed=discord.Embed(title="⚠️ Error", description=f"Failed to deploy panel: `{e}`", color=0xED4245), ephemeral=True)
+
+@bot.tree.command(name="setupverify", description="Deploy the persistent interactive verification panel in the current channel.")
+@app_commands.checks.has_permissions(administrator=True)
+async def setupverify(interaction: discord.Interaction):
+    await setup_verify(interaction)
 
 @bot.tree.command(name="stats", description="Display live updating global Roblox server statistics and distribution matrix.")
 @app_commands.check(has_bot_access)
@@ -810,7 +816,7 @@ async def scanlink(interaction: discord.Interaction, url: str):
 @bot.tree.command(name="robloxlink", description="Generate a direct join link for a specific Roblox Place and optional Job instance.")
 @app_commands.describe(place_id="Roblox Place ID", job_id="Job ID / Private Server Access Code (Optional)")
 async def robloxlink(interaction: discord.Interaction, place_id: str, job_id: str = None):
-    await interaction.response.defer(thinking=False)
+    await interaction.response.defer(ephemeral=False)
     try:
         game_url = f"https://www.roblox.com/games/{place_id}"
         if job_id:
