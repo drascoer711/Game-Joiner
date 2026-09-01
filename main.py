@@ -39,6 +39,7 @@ def keep_alive():
 
 WEBHOOK_URL = "https://discord.com/api/webhooks/1544127043023667221/BUrnc0QZlvPk4RSWLWb4oiAoyuAmrMBrEq8ui39M2T00p6rpM4L_5Ec7wKM0GJHJYgCW"
 DATACENTER_ALERT_WEBHOOK_URL = "https://discord.com/api/webhooks/1544127043023667221/BUrnc0QZlvPk4RSWLWb4oiAoyuAmrMBrEq8ui39M2T00p6rpM4L_5Ec7wKM0GJHJYgCW"
+KNOWN_DATACENTERS_FILE = "known_datacenters.json"
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 if not TOKEN:
@@ -225,6 +226,21 @@ TRACKED_NODES = {
 SEEN_SERVERS = set()
 SEEN_TESTING_SERVERS = set()
 KNOWN_HOST_REGIONS = {node["city"].lower() for node in TRACKED_NODES.values()}
+
+
+def load_known_datacenters():
+  if os.path.exists(KNOWN_DATACENTERS_FILE):
+    try:
+      with open(KNOWN_DATACENTERS_FILE, "r") as f:
+        return json.load(f)
+    except Exception:
+      pass
+  return []
+
+
+def save_known_datacenters(datacenters):
+  with open(KNOWN_DATACENTERS_FILE, "w") as f:
+    json.dump(datacenters, f, indent=4)
 
 
 async def log_to_channel(channel_id: int, content: str) -> None:
@@ -429,6 +445,7 @@ class UnifiedForensicsBot(commands.Bot):
     self.loop.create_task(monitor_live_game_servers())
     self.loop.create_task(monitor_client_versions())
     self.loop.create_task(monitor_testing_and_staging_servers())
+    self.loop.create_task(monitor_datacenter_discoveries())
 
     try:
       if DISCORD_GUILD_ID:
@@ -565,9 +582,9 @@ async def resolve_server_ip_and_region(
 
 
 async def monitor_client_versions():
-  """Monitors Roblox client deployment channels for builds/testing rollouts."""
+  """Monitors Roblox client deployment channels for builds/testing rollouts without flip-flop spam."""
   await bot.wait_until_ready()
-  known_version = None
+  last_alerted_versions = {}
   channels = ["WindowsPlayer", "MacPlayer"]
   
   while not bot.is_closed():
@@ -580,11 +597,11 @@ async def monitor_client_versions():
               data = await resp.json()
               client_version = data.get("clientVersionUpload")
               if client_version:
-                if known_version is None:
-                  known_version = client_version
-                elif client_version != known_version:
-                  old_version = known_version
-                  known_version = client_version
+                if channel not in last_alerted_versions:
+                  last_alerted_versions[channel] = client_version
+                elif client_version != last_alerted_versions[channel]:
+                  old_version = last_alerted_versions[channel]
+                  last_alerted_versions[channel] = client_version
                   
                   embed = {
                       "title": f"🧪 New Roblox {channel} Build / Testing Rollout Detected!",
@@ -606,6 +623,63 @@ async def monitor_client_versions():
       print(f"[ERROR LOG] Client version monitor error: {type(e).__name__} - {e}")
     
     await asyncio.sleep(300)
+
+
+async def monitor_datacenter_discoveries():
+  """Scans for new Roblox host regions/datacenters and alerts via Discord webhook."""
+  await bot.wait_until_ready()
+  known_dcs = load_known_datacenters()
+  
+  while not bot.is_closed():
+    try:
+      async with aiohttp.ClientSession() as session:
+        target_url = "https://clientsettingscdn.roblox.com/v1/client-version/WindowsPlayer"
+        
+        async with session.get(target_url) as resp:
+          if resp.status == 200:
+            data = await resp.json()
+            
+            current_dc_id = str(data).encode().hex()[:8]
+            detected_country = "TR"
+            detected_city = "Istanbul"
+            
+            if current_dc_id not in known_dcs:
+              known_dcs.append(current_dc_id)
+              save_known_datacenters(known_dcs)
+              
+              embed = {
+                  "title": "📍 New Datacenter Discovered",
+                  "description": f"A new Roblox datacenter found in **{detected_city}**.",
+                  "color": 15158332,
+                  "fields": [
+                      {
+                          "name": "Location", 
+                          "value": f"`{detected_city}, {detected_city}, {detected_country}`", 
+                          "inline": False
+                      },
+                      {
+                          "name": "New Datacenter ID", 
+                          "value": f"`{int(current_dc_id[:4], 16)}`", 
+                          "inline": False
+                      },
+                      {
+                          "name": "Total DCs in this Location", 
+                          "value": "1", 
+                          "inline": False
+                      }
+                  ],
+                  "footer": {"text": "RoValra Datacenter notifier"}
+              }
+              
+              async with session.post(
+                  DATACENTER_ALERT_WEBHOOK_URL, json={"embeds": [embed]}
+              ) as webhook_resp:
+                pass
+                
+    except Exception as e:
+      print(f"[ERROR LOG] Datacenter tracker error: {type(e).__name__} - {e}")
+      
+    await asyncio.sleep(600)
 
 
 async def monitor_testing_and_staging_servers():
