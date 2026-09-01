@@ -611,7 +611,7 @@ async def monitor_client_versions():
 async def monitor_testing_and_staging_servers():
   """Background daemon continuously scouting brand new servers and entirely new host regions."""
   await bot.wait_until_ready()
-  TARGET_PLACE_IDS = [920587237, 1818, 3237166, 4483381587] # Expanded multi-place coverage for broader regional hits (e.g. Athens)
+  TARGET_PLACE_IDS = [920587237, 1818, 3237166, 4483381587]
   
   while not bot.is_closed():
     try:
