@@ -16,7 +16,6 @@ import socketio
 import discord
 from discord import app_commands
 from discord.ext import commands
-from flask import Flask
 
 # ============================================================
 # CONFIGURATION
@@ -51,33 +50,13 @@ ALL_LOGS_CHANNEL_ID = 1540448203323875430
 VERIFY_LOG_CHANNEL_ID = 1541463371394711583
 OWNER_ID = 1256992368477864029
 
-SIO_APP_PORT = int(os.getenv("SIO_APP_PORT", "8081"))
+SIO_APP_PORT = int(os.getenv("PORT", os.getenv("SIO_APP_PORT", "10000")))
 
 TARGET_PLACE_IDS = [920587237, 1818, 3237166, 4483381587]
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-
-
-# ============================================================
-# KEEP-ALIVE FLASK SERVER
-# ============================================================
-
-app = Flask("")
-
-
-@app.route("/")
-def home():
-    return "Bot is active and running!"
-
-
-def run_flask():
-    app.run(host="0.0.0.0", port=8080)
-
-
-def keep_alive():
-    Thread(target=run_flask, daemon=True).start()
 
 
 # ============================================================
@@ -2466,5 +2445,4 @@ async def clear_global(interaction: discord.Interaction):
 # ============================================================
 
 if __name__ == "__main__":
-    keep_alive()
     bot.run(TOKEN)
