@@ -6,6 +6,8 @@ from threading import Thread
 import json
 import unicodedata
 from urllib.parse import urlparse
+import ipaddress
+import traceback
 
 import aiohttp
 from aiohttp import web
@@ -16,15 +18,12 @@ from discord import app_commands
 from discord.ext import commands
 from flask import Flask
 
-import ro
-
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
 VERCEL_SITE_URL = "https://website2-umber-zeta.vercel.app/"
 
-# Webhook intentionally kept directly in main.py, as requested.
 WEBHOOK_URL = "https://discord.com/api/webhooks/1544127043023667221/BUrnc0QZlvPk4RSWLWb4oiAoyuAmrMBrEq8ui39M2T00p6rpM4L_5Ec7wKM0GJHJYgCW"
 DATACENTER_ALERT_WEBHOOK_URL = WEBHOOK_URL
 
@@ -135,8 +134,8 @@ TRACKED_NODES = {
         "ip": "198.58.100.4",
     },
     "24110": {
-        "city": "SÃ£o Paulo",
-        "location": "SÃ£o Paulo, BR",
+        "city": "São Paulo",
+        "location": "São Paulo, BR",
         "id": "24110",
         "ip": "177.54.144.12",
     },
@@ -166,7 +165,7 @@ TRACKED_NODES = {
     },
     "212": {
         "city": "Paris",
-        "location": "Paris, Ãle-de-France, FR",
+        "location": "Paris, Île-de-France, FR",
         "id": "212",
         "ip": "159.65.120.44",
     },
@@ -196,13 +195,13 @@ TRACKED_NODES = {
     },
     "21402": {
         "city": "Tokyo",
-        "location": "Tokyo, KantÅ, JP",
+        "location": "Tokyo, Kantō, JP",
         "id": "21402",
         "ip": "139.162.112.45",
     },
     "55": {
         "city": "Tokyo",
-        "location": "Tokyo, KantÅ, JP",
+        "location": "Tokyo, Kantō, JP",
         "id": "55",
         "ip": "172.104.90.1",
     },
@@ -237,16 +236,13 @@ TRACKED_NODES = {
         "ip": "212.205.0.1",
     },
     "ZRH_01": {
-        "city": "ZÃ¼rich",
-        "location": "ZÃ¼rich, Switzerland",
+        "city": "Zürich",
+        "location": "Zürich, Switzerland",
         "id": "ZRH_01",
         "ip": "193.134.0.1",
     },
 }
 
-
-# Per-place tracking fixes the old bug where a server from one Roblox
-# experience could be incorrectly treated as dead in another.
 SEEN_SERVERS_BY_PLACE = {place_id: set() for place_id in TARGET_PLACE_IDS}
 SEEN_TESTING_SERVERS_BY_PLACE = {place_id: set() for place_id in TARGET_PLACE_IDS}
 
@@ -392,7 +388,7 @@ def register_datacenter(city: str, ip: str, source: str = "auto"):
         "location": city,
         "id": dcid,
         "ip": ip,
-        "status": "ð¢ Online",
+        "status": "🟢 Online",
         "discovered_by": source,
         "discovered_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -498,7 +494,7 @@ class GuildOnlyCommandTree(app_commands.CommandTree):
             if not interaction.response.is_done():
                 await interaction.response.send_message(
                     embed=discord.Embed(
-                        title="ð« Restricted Access",
+                        title="🚫 Restricted Access",
                         description="This command can only be used inside Discord servers.",
                         color=0xED4245,
                     ),
@@ -522,7 +518,7 @@ class PersistentVerificationView(discord.ui.View):
         label="Verify Account",
         style=discord.ButtonStyle.green,
         custom_id="persistent_verify:btn",
-        emoji="â",
+        emoji="✅",
     )
     async def verify_button(
         self,
@@ -580,7 +576,7 @@ class PersistentVerificationView(discord.ui.View):
 
                     if score >= 4:
                         suspects.append(
-                            f"â¢ **{member}** (`{member.id}`) "
+                            f"• **{member}** (`{member.id}`) "
                             f"[Score: `{score}` | {', '.join(reasons)}]"
                         )
 
@@ -599,7 +595,7 @@ class PersistentVerificationView(discord.ui.View):
             )
 
             log_embed = discord.Embed(
-                title="ð¡ï¸ Verification Gate Triggered",
+                title="🛡️ Verification Gate Triggered",
                 description=(
                     f"User **{interaction.user}** (`{interaction.user.id}`) "
                     "initialized the verification process."
@@ -609,16 +605,16 @@ class PersistentVerificationView(discord.ui.View):
             )
 
             log_embed.add_field(
-                name="ð Account Metadata",
+                name="📊 Account Metadata",
                 value=(
-                    f"â¢ **Created At:** "
+                    f"• **Created At:** "
                     f"<t:{int(target_created.timestamp())}:R>"
                 ),
                 inline=False,
             )
 
             log_embed.add_field(
-                name="ðµï¸ Potential Account Heuristic",
+                name="🕵️‍♂️ Potential Account Heuristic",
                 value=alt_summary[:1024],
                 inline=False,
             )
@@ -634,17 +630,17 @@ class PersistentVerificationView(discord.ui.View):
             print(f"[ERROR LOG] Verification logging failed: {e}")
 
         embed = discord.Embed(
-            title="ð Secure Authentication Portal",
+            title="🔒 Secure Authentication Portal",
             description=(
                 "Your account has been successfully verified!\n\n"
-                "ð THIS VERIFY DOES NOT TAKE IPS OR SUCH INFORMATION."
+                "🌐 THIS VERIFY DOES NOT TAKE IPS OR SUCH INFORMATION."
             ),
             color=0x57F287,
         )
 
         embed.add_field(
             name="Direct Portal Link",
-            value=f"ð [Click Here to Proceed]({VERCEL_SITE_URL})",
+            value=f"🔗 [Click Here to Proceed]({VERCEL_SITE_URL})",
             inline=False,
         )
 
@@ -658,7 +654,7 @@ class PersistentVerificationView(discord.ui.View):
 
 async def deploy_verify_panel(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="ð¡ï¸ Account Verification",
+        title="🛡️ Account Verification",
         description=(
             "Click the button below to begin account verification.\n\n"
             "The verification flow does not request or collect IP addresses."
@@ -736,7 +732,6 @@ def clean_host(value):
     if value.startswith("[") and "]" in value:
         value = value[1:value.index("]")]
 
-    # IPv4 host:port
     if value.count(":") == 1:
         value = value.split(":", 1)[0]
 
@@ -861,7 +856,7 @@ async def monitor_client_versions():
                         last_versions[channel] = client_version
 
                         embed = {
-                            "title": f"ð§ª New Roblox {channel} Build Detected",
+                            "title": f"🧪 New Roblox {channel} Build Detected",
                             "color": 16776960,
                             "fields": [
                                 {
@@ -897,10 +892,6 @@ async def monitor_client_versions():
 
 
 async def monitor_datacenter_discoveries():
-    """
-    Discovers regions only from actual server-region resolution results.
-    It no longer invents a datacenter ID or hardcodes a city.
-    """
     await bot.wait_until_ready()
 
     known_dcs = set(load_known_datacenters())
@@ -950,7 +941,7 @@ async def monitor_datacenter_discoveries():
                         known_dcs.add(created_dcid)
 
                         embed = {
-                            "title": "ð New Datacenter Discovered",
+                            "title": "📍 New Datacenter Discovered",
                             "description": (
                                 f"A new Roblox infrastructure region was "
                                 f"observed in **{city}**."
@@ -1060,10 +1051,10 @@ async def monitor_testing_and_staging_servers():
                         max_players = server.get("maxPlayers", 0)
 
                         title = (
-                            f"ð¨ Brand New Roblox Host Region Discovered "
+                            f"🚨 Brand New Roblox Host Region Discovered "
                             f"({city})!"
                             if is_brand_new_region
-                            else "ð§ª New Testing / Staging Instance Observed"
+                            else "🧪 New Testing / Staging Instance Observed"
                         )
 
                         embed = {
@@ -1123,7 +1114,7 @@ async def monitor_testing_and_staging_servers():
                             ],
                             "footer": {
                                 "text": (
-                                    "Staging & Testing Server Radar â¢ "
+                                    "Staging & Testing Server Radar • "
                                     "Real-Time Infrastructure Watch"
                                 )
                             },
@@ -1132,7 +1123,6 @@ async def monitor_testing_and_staging_servers():
                         await post_webhook({"embeds": [embed]})
 
                     if len(seen) > 3000:
-                        # Keep the newest IDs only.
                         SEEN_TESTING_SERVERS_BY_PLACE[place_id] = set(
                             list(seen)[-1500:]
                         )
@@ -1149,7 +1139,6 @@ async def monitor_testing_and_staging_servers():
 async def monitor_live_game_servers():
     await bot.wait_until_ready()
 
-    # Initial snapshot is kept separately for every place.
     try:
         async with aiohttp.ClientSession() as session:
             for place_id in TARGET_PLACE_IDS:
@@ -1206,7 +1195,6 @@ async def monitor_live_game_servers():
                         if server.get("id") and server.get("id") not in seen
                     ]
 
-                    # Correctly remove only dead servers belonging to this place.
                     seen.intersection_update(current_ids)
                     seen.update(current_ids)
 
@@ -1243,10 +1231,10 @@ async def monitor_live_game_servers():
 
                         embed = {
                             "title": (
-                                f"ð¨ New Roblox Host Region Discovered "
+                                f"🚨 New Roblox Host Region Discovered "
                                 f"({city})!"
                                 if is_new_region
-                                else "ð¨ New Roblox Server Instance Observed"
+                                else "🚨 New Roblox Server Instance Observed"
                             ),
                             "color": 16711680,
                             "fields": [
@@ -1306,7 +1294,7 @@ async def monitor_live_game_servers():
                             ],
                             "footer": {
                                 "text": (
-                                    "Live Instance Radar â¢ "
+                                    "Live Instance Radar • "
                                     "Region Tracking Active"
                                 )
                             },
@@ -1418,7 +1406,7 @@ socket.on("known_datacenters", (list) => {
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.textContent =
-      d.dcid + " â¢ " + (d.ip || "n/a");
+      d.dcid + " • " + (d.ip || "n/a");
 
     item.appendChild(title);
     item.appendChild(meta);
@@ -1602,7 +1590,7 @@ class UnifiedForensicsBot(commands.Bot):
                 log_to_channel(
                     ALL_LOGS_CHANNEL_ID,
                     (
-                        "âï¸ Command tree synced successfully "
+                        "⚙️ Command tree synced successfully "
                         f"({len(synced)} commands registered)."
                     ),
                 )
@@ -1624,7 +1612,7 @@ class UnifiedForensicsBot(commands.Bot):
             asyncio.create_task(
                 log_to_channel(
                     ALL_LOGS_CHANNEL_ID,
-                    f"ð¢ **System Online:** Authenticated as `{self.user}`",
+                    f"🟢 **System Online:** Authenticated as `{self.user}`",
                 )
             )
 
@@ -1643,14 +1631,14 @@ async def on_app_command_error(
 ):
     if isinstance(error, RequiredRoleError):
         embed = discord.Embed(
-            title="ð« Access Denied",
+            title="🚫 Access Denied",
             description=str(error),
             color=0xED4245,
         )
 
     elif isinstance(error, app_commands.CheckFailure):
         embed = discord.Embed(
-            title="ð« Permission Error",
+            title="🚫 Permission Error",
             description=(
                 "You do not have permission to execute this command."
             ),
@@ -1664,7 +1652,7 @@ async def on_app_command_error(
         traceback.print_exc()
 
         embed = discord.Embed(
-            title="â ï¸ Command Error",
+            title="⚠️ Command Error",
             description=(
                 "The command failed unexpectedly. "
                 "Check the bot console for details."
@@ -1771,7 +1759,7 @@ async def findnewhost(interaction: discord.Interaction):
         if not found_nodes:
             await interaction.followup.send(
                 embed=discord.Embed(
-                    title="ð Testing Host Radar",
+                    title="🔍 Testing Host Radar",
                     description=(
                         "No resolvable testing/staging infrastructure "
                         "was found in this scan cycle."
@@ -1789,9 +1777,9 @@ async def findnewhost(interaction: discord.Interaction):
 
         embed = discord.Embed(
             title=(
-                "ð¨ New Roblox Host Region Observed"
+                "🚨 New Roblox Host Region Observed"
                 if new_region_exists
-                else "ð§ª Testing & Staging Server Nodes"
+                else "🧪 Testing & Staging Server Nodes"
             ),
             description=(
                 "Scan results synchronized with the infrastructure "
@@ -1807,31 +1795,31 @@ async def findnewhost(interaction: discord.Interaction):
 
         for node in found_nodes[:5]:
             field_value = (
-                f"â¢ **Datacenter ID:** `{node['dcid']}`\n"
-                f"â¢ **Location:** `{node['city']}, "
+                f"• **Datacenter ID:** `{node['dcid']}`\n"
+                f"• **Location:** `{node['city']}, "
                 f"{node['country']}`\n"
-                f"â¢ **Infrastructure IP:** `{node['ip']}`\n"
-                f"â¢ **ISP/Host:** `{node['isp']}`\n"
-                f"â¢ **Players:** "
+                f"• **Infrastructure IP:** `{node['ip']}`\n"
+                f"• **ISP/Host:** `{node['isp']}`\n"
+                f"• **Players:** "
                 f"`{node['playing']}/{node['max']}`\n"
-                f"â¢ **Ping:** `{node['ping']}ms`\n"
-                f"â¢ **Job ID:** `{node['job_id']}`\n"
-                f"â¢ **Game:** "
+                f"• **Ping:** `{node['ping']}ms`\n"
+                f"• **Job ID:** `{node['job_id']}`\n"
+                f"• **Game:** "
                 f"[Open Roblox Game]("
                 f"{public_game_url(node['place_id'])})"
             )
 
             if node["is_new_region"]:
-                field_value += "\nâ¢ **Status:** ð¨ NEW REGION"
+                field_value += "\n• **Status:** 🚨 NEW REGION"
 
             embed.add_field(
-                name=f"ð Node [{node['city']}]",
+                name=f"📍 Node [{node['city']}]",
                 value=field_value[:1024],
                 inline=False,
             )
 
         embed.set_footer(
-            text="Datacenter Telemetry Subsystem â¢ Testing Node Matrix"
+            text="Datacenter Telemetry Subsystem • Testing Node Matrix"
         )
 
         await post_webhook(
@@ -1851,7 +1839,7 @@ async def findnewhost(interaction: discord.Interaction):
 
         await interaction.followup.send(
             embed=discord.Embed(
-                title="â ï¸ Error",
+                title="⚠️ Error",
                 description=(
                     f"Failed to scan testing hosts: `{e}`"
                 ),
@@ -1880,8 +1868,6 @@ async def setup_verify(interaction: discord.Interaction):
 )
 @app_commands.checks.has_permissions(administrator=True)
 async def setupverify(interaction: discord.Interaction):
-    # Fixed: setup_verify is an app_commands.Command and cannot be
-    # called directly like a normal Python function.
     await deploy_verify_panel(interaction)
 
 
@@ -1904,7 +1890,7 @@ async def checklocation(
     if not node:
         await interaction.response.send_message(
             embed=discord.Embed(
-                title="â Node Not Found",
+                title="❌ Node Not Found",
                 description=(
                     f"No tracked node exists with ID `{node_id}`."
                 ),
@@ -1915,7 +1901,7 @@ async def checklocation(
         return
 
     embed = discord.Embed(
-        title=f"ð {node['city']} Infrastructure Node",
+        title=f"📍 {node['city']} Infrastructure Node",
         color=0x5865F2,
     )
 
@@ -1974,7 +1960,7 @@ async def processdc(
     except ValueError:
         await interaction.response.send_message(
             embed=discord.Embed(
-                title="â Invalid IP",
+                title="❌ Invalid IP",
                 description="Please provide a valid IP address.",
                 color=0xED4245,
             ),
@@ -1989,13 +1975,13 @@ async def processdc(
     )
 
     if registered:
-        title = "ð Datacenter Registered"
+        title = "📍 Datacenter Registered"
         description = (
             f"Registered **{city}** as `{dcid}`."
         )
         color = 0x57F287
     else:
-        title = "â¹ï¸ Datacenter Already Known"
+        title = "ℹ️ Datacenter Already Known"
         description = (
             f"`{dcid}` is already present in the datacenter index."
         )
@@ -2036,7 +2022,7 @@ async def checkallservers(interaction: discord.Interaction):
         return
 
     embed = discord.Embed(
-        title="ð Indexed Infrastructure Nodes",
+        title="🌐 Indexed Infrastructure Nodes",
         description=(
             f"Showing `{len(nodes)}` indexed nodes. "
             "Status is indexed metadata unless a live scan reports otherwise."
@@ -2048,9 +2034,9 @@ async def checkallservers(interaction: discord.Interaction):
 
     for node in nodes[:25]:
         lines.append(
-            f"â¢ **{node.get('city', 'Unknown')}** "
-            f"`{node.get('id', 'N/A')}` â "
-            f"{node.get('status', 'ð Indexed')}"
+            f"• **{node.get('city', 'Unknown')}** "
+            f"`{node.get('id', 'N/A')}` — "
+            f"{node.get('status', '📋 Indexed')}"
         )
 
     embed.description += "\n\n" + "\n".join(lines)
@@ -2091,7 +2077,7 @@ async def stats(interaction: discord.Interaction):
     total_regions = len(city_counts)
 
     embed = discord.Embed(
-        title="ð Infrastructure Statistics",
+        title="📊 Infrastructure Statistics",
         description=(
             "Statistics are based on the current indexed node database; "
             "they are not fabricated live server counts."
@@ -2112,7 +2098,7 @@ async def stats(interaction: discord.Interaction):
     )
 
     region_lines = [
-        f"â¢ **{city}:** `{count}`"
+        f"• **{city}:** `{count}`"
         for city, count in sorted(
             city_counts.items(),
             key=lambda item: (-item[1], item[0]),
@@ -2144,7 +2130,7 @@ async def robloxlink(
 ):
     if place_id <= 0:
         await interaction.response.send_message(
-            "â Invalid place ID.",
+            "❌ Invalid place ID.",
             ephemeral=True,
         )
         return
@@ -2152,7 +2138,7 @@ async def robloxlink(
     url = public_game_url(place_id)
 
     embed = discord.Embed(
-        title="ð Roblox Game Link",
+        title="🔗 Roblox Game Link",
         description=f"[Open Roblox Game]({url})",
         color=0x5865F2,
     )
@@ -2164,7 +2150,7 @@ async def robloxlink(
     )
 
     embed.set_footer(
-        text="Public game page link â¢ not a private-server join code"
+        text="Public game page link • not a private-server join code"
     )
 
     await interaction.response.send_message(
@@ -2192,7 +2178,7 @@ async def scanlink(
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         await interaction.response.send_message(
             embed=discord.Embed(
-                title="â Invalid URL",
+                title="❌ Invalid URL",
                 description="Only valid HTTP/HTTPS URLs are supported.",
                 color=0xED4245,
             ),
@@ -2224,11 +2210,11 @@ async def scanlink(
     result = (
         "No obvious heuristic flags were found."
         if not flags
-        else "\n".join(f"â¢ {flag}" for flag in flags)
+        else "\n".join(f"• {flag}" for flag in flags)
     )
 
     embed = discord.Embed(
-        title="ð URL Heuristic Scan",
+        title="🔍 URL Heuristic Scan",
         description=result,
         color=0x57F287 if not flags else 0xFEE75C,
     )
@@ -2277,7 +2263,7 @@ async def globalscan(
     snowflake_like = bool(re.fullmatch(r"\d{15,22}", cleaned))
 
     embed = discord.Embed(
-        title="ð Global Identifier Scan",
+        title="🌐 Global Identifier Scan",
         color=0x5865F2,
     )
 
@@ -2304,7 +2290,7 @@ async def globalscan(
     )
 
     embed.set_footer(
-        text="Format validation only â¢ no claim of account reputation"
+        text="Format validation only • no claim of account reputation"
     )
 
     await interaction.response.send_message(
@@ -2339,13 +2325,13 @@ async def report(
         parsed = urlparse(proof_url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             await interaction.response.send_message(
-                "â Proof URL must be a valid HTTP/HTTPS URL.",
+                "❌ Proof URL must be a valid HTTP/HTTPS URL.",
                 ephemeral=True,
             )
             return
 
     embed = discord.Embed(
-        title="ð¨ New Report",
+        title="🚨 New Report",
         color=0xED4245,
         timestamp=datetime.now(timezone.utc),
     )
@@ -2375,7 +2361,7 @@ async def report(
 
     await log_to_channel(
         ALL_LOGS_CHANNEL_ID,
-        f"ð¨ Report submitted by `{interaction.user}`",
+        f"🚨 Report submitted by `{interaction.user}`",
     )
 
     try:
@@ -2387,7 +2373,7 @@ async def report(
 
     await interaction.response.send_message(
         embed=discord.Embed(
-            title="â Report Submitted",
+            title="✅ Report Submitted",
             description="Your report was sent to the configured moderation log.",
             color=0x57F287,
         ),
@@ -2407,7 +2393,7 @@ async def report(
 async def neural_hijack(interaction: discord.Interaction):
     await interaction.response.send_message(
         embed=discord.Embed(
-            title="ð§  Neural Telemetry Terminal",
+            title="🧠 Neural Telemetry Terminal",
             description=(
                 "Simulation mode active.\n\n"
                 "No account takeover, credential access, or "
@@ -2436,11 +2422,9 @@ async def clear_global(interaction: discord.Interaction):
             bot.tree.get_commands()
         )
 
-        # First remove the remote global commands.
         bot.tree.clear_commands(guild=None)
         await bot.tree.sync()
 
-        # Then restore the local command objects and sync them again.
         for command in current_commands:
             try:
                 bot.tree.add_command(command)
@@ -2454,7 +2438,7 @@ async def clear_global(interaction: discord.Interaction):
 
         await interaction.followup.send(
             embed=discord.Embed(
-                title="ð§¹ Global Commands Refreshed",
+                title="🧹 Global Commands Refreshed",
                 description=(
                     f"Cleared stale global commands and restored "
                     f"`{len(restored)}` current commands."
@@ -2469,7 +2453,7 @@ async def clear_global(interaction: discord.Interaction):
 
         await interaction.followup.send(
             embed=discord.Embed(
-                title="â ï¸ Global Command Refresh Failed",
+                title="⚠️ Global Command Refresh Failed",
                 description=f"`{type(e).__name__}: {e}`",
                 color=0xED4245,
             ),
