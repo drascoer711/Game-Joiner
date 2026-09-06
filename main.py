@@ -11,6 +11,7 @@ import traceback
 
 import aiohttp
 from aiohttp import web
+import socketio
 
 import discord
 from discord import app_commands
