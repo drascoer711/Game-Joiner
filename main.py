@@ -2440,4 +2440,24 @@ async def roblox_user(
 
         if description:
             clean_desc = description if len(description) <= 300 else description[:297] + "..."
-            embed.add_field(name="Bio", value=f"```{clean_desc}
+            embed.add_field(name="Bio", value=f"```{clean_desc}```", inline=False)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    except Exception as e:
+        print(f"[ERROR LOG] /user failed: {type(e).__name__} - {e}")
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="⚠️ Error",
+                description=f"Failed to fetch user info: `{e}`",
+                color=0xED4245
+            ),
+            ephemeral=True
+        )
+
+# ============================================================
+# BOT RUN
+# ============================================================
+
+if __name__ == "__main__":
+    bot.run(TOKEN)
