@@ -2361,88 +2361,83 @@ async def report(
 
 
 # ============================================================
-# /neural_hijack
+# /user
 # ============================================================
 
 @bot.tree.command(
-    name="neural_hijack",
-    description="Owner-only telemetry terminal simulation.",
+    name="user",
+    description="Look up detailed public profile info for a Roblox username.",
 )
-@owner_only()
-async def neural_hijack(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        embed=discord.Embed(
-            title="🧠 Neural Telemetry Terminal",
-            description=(
-                "Simulation mode active.\n\n"
-                "No account takeover, credential access, or "
-                "unauthorized system operation is performed."
-            ),
-            color=0x5865F2,
-        ),
-        ephemeral=True,
-    )
-
-
-# ============================================================
-# /clear-global
-# ============================================================
-
-@bot.tree.command(
-    name="clear-global",
-    description="Clear and immediately restore the current global command set.",
-)
-@owner_only()
-async def clear_global(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
+@app_commands.describe(username="Roblox username to search")
+@app_commands.check(has_bot_access)
+async def roblox_user(
+    interaction: discord.Interaction,
+    username: str,
+):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    username = username.strip()
 
     try:
-        current_commands = list(
-            bot.tree.get_commands()
+        async with aiohttp.ClientSession() as session:
+            # 1. Get User ID from username
+            async with session.post(
+                "https://users.roblox.com/v1/usernames/users",
+                json={"usernames": [username], "excludeBannedUsers": True}
+            ) as resp:
+                if resp.status != 200:
+                    raise Exception("Failed to contact Roblox Users API.")
+                data = await resp.json()
+                users = data.get("data", [])
+                if not users:
+                    await interaction.followup.send(
+                        embed=discord.Embed(
+                            title="❌ User Not Found",
+                            description=f"No active Roblox user found with username `{username}`.",
+                            color=0xED4245
+                        ),
+                        ephemeral=True
+                    )
+                    return
+                user_info = users[0]
+                user_id = user_info["id"]
+                display_name = user_info.get("displayName", username)
+                resolved_name = user_info.get("name", username)
+
+            # 2. Get detailed user info
+            async with session.get(f"https://users.roblox.com/v1/users/{user_id}") as resp:
+                detailed_data = await resp.json() if resp.status == 200 else {}
+                description = detailed_data.get("description", "No bio provided.")
+                created_at = detailed_data.get("created")
+                is_banned = detailed_data.get("isBanned", False)
+
+            # 3. Get Headshot Thumbnail
+            async with session.get(
+                f"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={user_id}&size=150x150&format=Png&isCircular=false"
+            ) as resp:
+                thumb_data = await resp.json() if resp.status == 200 else {}
+                thumbs = thumb_data.get("data", [])
+                avatar_url = thumbs[0].get("imageUrl") if thumbs else None
+
+        embed = discord.Embed(
+            title=f"👤 Roblox Profile: {resolved_name}",
+            url=f"https://www.roblox.com/users/{user_id}/profile",
+            color=0xED4245 if is_banned else 0x5865F2,
+            timestamp=datetime.now(timezone.utc)
         )
+        if avatar_url:
+            embed.set_thumbnail(url=avatar_url)
 
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync()
-
-        for command in current_commands:
+        embed.add_field(name="Display Name", value=f"`{display_name}`", inline=True)
+        embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
+        embed.add_field(name="Status", value="🚫 Banned" if is_banned else "🟢 Active", inline=True)
+        
+        if created_at:
             try:
-                bot.tree.add_command(command)
-            except Exception as e:
-                print(
-                    f"[SYNC] Failed restoring command "
-                    f"{getattr(command, 'name', '?')}: {e}"
-                )
+                dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                embed.add_field(name="Account Created", value=f"<t:{int(dt.timestamp())}:R>", inline=True)
+            except Exception:
+                pass
 
-        restored = await bot.tree.sync()
-
-        await interaction.followup.send(
-            embed=discord.Embed(
-                title="🧹 Global Commands Refreshed",
-                description=(
-                    f"Cleared stale global commands and restored "
-                    f"`{len(restored)}` current commands."
-                ),
-                color=0x57F287,
-            ),
-            ephemeral=True,
-        )
-
-    except Exception as e:
-        print(f"[ERROR LOG] clear-global failed: {e}")
-
-        await interaction.followup.send(
-            embed=discord.Embed(
-                title="⚠️ Global Command Refresh Failed",
-                description=f"`{type(e).__name__}: {e}`",
-                color=0xED4245,
-            ),
-            ephemeral=True,
-        )
-
-
-# ============================================================
-# START
-# ============================================================
-
-if __name__ == "__main__":
-    bot.run(TOKEN)
+        if description:
+            clean_desc = description if len(description) <= 300 else description[:297] + "..."
+            embed.add_field(name="Bio", value=f"```{clean_desc}
