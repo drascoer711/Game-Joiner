@@ -1,4 +1,4 @@
-from datetime import datetime, timezon
+from datetime import datetime, timezone
 import asyncio
 import os
 import re
