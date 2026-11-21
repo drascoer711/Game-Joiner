@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: game-joiner
+    runtime: python
+    buildCommand: sh render_build.sh
+    startCommand: python render_start.py
+    envVars:
+      - key: DISCORD_BOT_TOKEN
+        sync: false
